@@ -45,6 +45,9 @@ class ModelingTab(QWidget):
     def __init__(self, graph):
         super().__init__()
         self.graph = graph
+        self._fits_height_timer = QTimer(self)
+        self._fits_height_timer.setSingleShot(True)
+        self._fits_height_timer.timeout.connect(self.update_fits_panel_height)
         layout = page_layout(QVBoxLayout(self))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -276,7 +279,7 @@ class ModelingTab(QWidget):
         self.fits_hint.setVisible(self.fits_list.count() == 0)
         self.fits_list.setVisible(self.fits_list.count() > 0)
         self.update_fits_panel_height()
-        QTimer.singleShot(0, self.update_fits_panel_height)
+        self._fits_height_timer.start(0)
         self.fit_button.setText("Recalculer cette modélisation" if self.current_fit() else "Calculer la modélisation")
 
     def update_fits_panel_height(self):

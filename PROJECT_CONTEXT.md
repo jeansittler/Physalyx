@@ -215,6 +215,18 @@ Règle d'interaction :
 
 Lorsqu’un nouvel écran ou un nouveau sélecteur est ajouté, vérifier explicitement qu’il suit cette convention.
 
+### Tableur scientifique
+
+Conventions durables :
+- une formule de cellule commence par `=` et peut être composée dans la barre `fx` au clavier et par insertion de références A1 lors de clics sur les cellules ;
+- la session d’édition conserve sa cellule cible, le curseur et la sélection ; simple clic, double-clic, `F2`, Entrée et Échap doivent conduire à un comportement cohérent, sans validation intermédiaire de l’éditeur Qt ;
+- la cellule cible et les cellules référencées sont distinguées temporairement pendant la composition, puis ces indications disparaissent à la fin de la session ;
+- les formules acceptent les références A1, les noms scientifiques comme `=x+y` ou `=sqrt(vx^2+vy^2)`, ainsi qu’une syntaxe mixte ; un nom désigne la valeur de sa grandeur sur la ligne courante ;
+- les références scientifiques sont conservées sous une forme interne liée aux colonnes logiques : renommage et déplacement visuel ne doivent pas les réorienter, tandis que la suppression produit explicitement `#REF!` ;
+- les noms ambigus, réservés ou incompatibles utilisent l’adressage A1 comme solution de repli ; la recopie verticale traduit les références A1 relatives et conserve les références par nom ;
+- une validation incorrecte conserve intégralement la saisie et l’ancienne valeur, puis affiche une erreur pédagogique ; aucun dialogue ne doit apparaître pendant un recalcul, une recopie ou le chargement d’un projet ;
+- les projets historiques contenant des formules A1 restent compatibles et utilisent le même moteur `CellFormula`, sans système de calcul parallèle.
+
 ### Graphique
 
 Conventions durables :
@@ -234,6 +246,7 @@ Conventions durables :
 - la sélection permet de retrouver les paramètres et résultats, de recalculer et remplacer le modèle choisi, ou de le supprimer sans affecter les autres modèles ;
 - toute création, modification ou suppression reste synchronisée avec Graphique et compatible avec la sauvegarde et la réouverture des projets existants ;
 - la barre d'actions et la liste doivent rester utilisables sans chevauchement ni contenu tronqué sur les écrans portables, notamment en `1366×768` et `1100×700`.
+- toute mise à jour différée d’un widget doit utiliser un timer parenté au QObject concerné afin d’être annulée automatiquement lors de sa destruction.
 
 ### Calculs
 

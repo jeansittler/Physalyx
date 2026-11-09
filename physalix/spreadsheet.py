@@ -1,14 +1,18 @@
 """Formules de cellules : analyse limitée, références A1 et recopie relative."""
 
 import ast
+import keyword
 import math
 import re
 
-from physalix.calculations import FUNCTIONS
+from physalix.calculations import CONSTANTS, FUNCTIONS
 
 
 REFERENCE = r"\$?[A-Za-z]{1,5}\$?[1-9][0-9]*"
 REFERENCES = re.compile(rf"(?<![\w$])({REFERENCE})(?:\s*:\s*({REFERENCE}))?(?![\w$]|\s*\()")
+QUANTITY_REFERENCE = re.compile(r"\[\[Q([0-9]+)\]\]")
+IDENTIFIER = re.compile(r"(?<![\w$])([^\W\d]\w*)(?![\w$])", re.UNICODE)
+AGGREGATES = {"somme", "sum", "moyenne", "average", "min", "max"}
 
 
 def column_label(column):
@@ -26,6 +30,53 @@ def cell_position(reference):
     for char in match[2].upper():
         column = column * 26 + ord(char) - 64
     return int(match[4]) - 1, column - 1
+
+
+def quantity_name(names, column):
+    """Nom utilisable sans ambiguïté, sinon None pour imposer le repli A1."""
+    name = names[column]
+    reserved = set(FUNCTIONS) | set(CONSTANTS) | AGGREGATES
+    if (name and name.isidentifier() and not keyword.iskeyword(name)
+            and names.count(name) == 1 and name.lower() not in reserved
+            and not re.fullmatch(REFERENCE, name)):
+        return name
+    return None
+
+
+def canonicalize_formula(expression, names):
+    """Remplacer les noms scientifiques par des références de colonnes stables."""
+    def replace_identifier(match):
+        name = match[1]
+        if expression[max(0, match.start() - 2):match.start()] == "[[" and expression[match.end():match.end() + 2] == "]]":
+            return name
+        if re.fullmatch(REFERENCE, name):
+            return name
+        tail = expression[match.end():]
+        if tail.lstrip().startswith("("):
+            return name
+        matches = [column for column, candidate in enumerate(names) if candidate == name]
+        if len(matches) > 1:
+            raise ValueError(
+                f"Le nom « {name} » correspond à plusieurs grandeurs. Utilisez une référence A1.")
+        if len(matches) == 1:
+            if quantity_name(names, matches[0]) is None:
+                raise ValueError(
+                    f"Le nom « {name} » est réservé ou ambigu. Utilisez une référence A1.")
+            return f"[[Q{matches[0]}]]"
+        if name.lower() in CONSTANTS:
+            return name
+        return name
+    return IDENTIFIER.sub(replace_identifier, expression)
+
+
+def display_formula(expression, names, row):
+    """Afficher les noms actuels, avec une adresse A1 sûre comme solution de repli."""
+    def replace(match):
+        column = int(match[1])
+        if not 0 <= column < len(names):
+            return "#REF!"
+        return quantity_name(names, column) or f"{column_label(column)}{row + 1}"
+    return QUANTITY_REFERENCE.sub(replace, expression)
 
 
 def translate_formula(expression, rows=0, columns=0):
@@ -49,7 +100,13 @@ def remove_formula_column(expression, removed):
             parts = re.fullmatch(r"(\$?)([A-Za-z]+)(\$?)([1-9][0-9]*)", reference)
             return f"{parts[1]}{column_label(column - (column > removed))}{parts[3]}{row + 1}"
         return shift(match[1]) + (":" + shift(match[2]) if match[2] else "")
-    return REFERENCES.sub(replace, expression)
+    expression = REFERENCES.sub(replace, expression)
+    def remove_quantity(match):
+        column = int(match[1])
+        if column == removed:
+            return "#REF!"
+        return f"[[Q{column - (column > removed)}]]"
+    return QUANTITY_REFERENCE.sub(remove_quantity, expression)
 
 
 class CellError(ValueError):
@@ -59,9 +116,11 @@ class CellError(ValueError):
 
 
 class CellFormula:
-    def __init__(self, text):
+    def __init__(self, text, names=None, current_row=None):
         if len(text) > 2000:
             raise ValueError("Formule trop longue (2 000 caractères maximum).")
+        self.canonical_text = canonicalize_formula(text, names) if names is not None else text
+        text = self.canonical_text
         if "#REF!" in text:
             raise CellError("#REF!", "La formule désigne une cellule supprimée ou une référence hors tableau.")
         self.references = {}
@@ -73,10 +132,19 @@ class CellFormula:
             name = f"ref_{len(self.references)}"
             self.references[name] = (start, end)
             return name
-        # Interdire les identifiants internes avant leur insertion par le parseur.
-        if "_" in text:
+        if re.search(r"(?<!\w)ref_[0-9]+(?!\w)", text):
             raise ValueError("Identifiant non autorisé.")
-        expression = REFERENCES.sub(reference, text[1:])
+        def quantity_reference(match):
+            column = int(match[1])
+            if names is not None and not 0 <= column < len(names):
+                raise CellError("#REF!", "La grandeur référencée n'existe plus dans le tableau.")
+            if current_row is None:
+                raise ValueError("La ligne de la formule est nécessaire pour résoudre une grandeur.")
+            name = f"ref_{len(self.references)}"
+            self.references[name] = ((current_row, column), None)
+            return name
+        expression = QUANTITY_REFERENCE.sub(quantity_reference, text[1:])
+        expression = REFERENCES.sub(reference, expression)
         expression = expression.replace("^", "**").replace("²", "**2").replace("³", "**3")
         expression = expression.replace("×", "*").replace("÷", "/").replace("−", "-")
         expression = re.sub(r"(?<=\d),(?=\d)", ".", expression).replace(";", ",")
@@ -87,15 +155,18 @@ class CellFormula:
         if len(list(ast.walk(self.tree))) > 200:
             raise ValueError("Formule trop complexe.")
         self.functions = dict(FUNCTIONS, racine=math.sqrt, ln=math.log)
-        self.aggregates = {"somme", "sum", "moyenne", "average", "min", "max"}
+        self.aggregates = AGGREGATES
         def validate(node, depth=0):
             if depth > 30:
                 raise ValueError("Trop de parenthèses imbriquées.")
             if isinstance(node, ast.Constant) and type(node.value) in (int, float):
                 if not math.isfinite(float(node.value)):
                     raise ValueError("Nombre non fini.")
-            elif isinstance(node, ast.Name) and (node.id in self.references or node.id.lower() in ("pi", "e")):
-                pass
+            elif isinstance(node, ast.Name):
+                if node.id in self.references or node.id.lower() in CONSTANTS:
+                    pass
+                else:
+                    raise ValueError(f"La grandeur « {node.id} » n'existe pas dans le tableau.")
             elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
                 validate(node.left, depth + 1)
                 validate(node.right, depth + 1)

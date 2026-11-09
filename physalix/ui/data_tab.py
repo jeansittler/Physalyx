@@ -6,8 +6,8 @@ import re
 import math
 import json
 
-from PySide6.QtCore import QAbstractTableModel, QEvent, QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, Qt, Signal
-from PySide6.QtGui import QKeySequence, QRegularExpressionValidator, QColor, QBrush, QPen, QUndoCommand, QUndoStack
+from PySide6.QtCore import QAbstractTableModel, QEvent, QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPersistentModelIndex, Qt, Signal
+from PySide6.QtGui import QKeySequence, QPainter, QRegularExpressionValidator, QColor, QBrush, QPen, QUndoCommand, QUndoStack
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import (
     QAbstractItemDelegate, QAbstractItemView, QApplication, QComboBox, QHeaderView,
@@ -22,7 +22,23 @@ from physalix.ui.components import help_toggle, page_layout, panel, role
 from physalix.ui.icons import icon
 from physalix.ui.math_help import math_help_button
 from physalix.ui.scientific_symbols import replace_name, scientific_symbol_button
-from physalix.spreadsheet import CellFormula, CellError, column_label, remove_formula_column, translate_formula
+from physalix.spreadsheet import (CellFormula, CellError, REFERENCES, cell_position,
+                                 column_label, display_formula, remove_formula_column,
+                                 translate_formula)
+
+
+def spreadsheet_formula_error_message(error):
+    """Ajouter une aide courte aux erreurs de saisie, sans modifier le moteur."""
+    message = str(error)
+    if message.startswith("La grandeur «") and "n'existe pas dans le tableau" in message:
+        return message + " Vérifiez son nom ou utilisez une grandeur existante."
+    if "Fonction inconnue" in message:
+        return message + " Utilisez une fonction proposée dans l’aide mathématique."
+    if "plusieurs grandeurs" in message:
+        return message + " Renommez-la ou utilisez une référence A1 explicite."
+    if message.startswith("Formule incorrecte"):
+        return message + " Vérifiez les parenthèses, les opérateurs et les noms utilisés."
+    return message
 
 
 class CellEdit(QUndoCommand):
@@ -109,12 +125,14 @@ class MeasurementsModel(QAbstractTableModel):
                 return self.names[index.column()]
             if index.row() == self.unit_row:
                 return self.units[index.column()]
-            if role == Qt.ItemDataRole.EditRole and (index.row() - self.first_data_row, index.column()) in self.formulas:
-                return self.formulas[index.row() - self.first_data_row, index.column()]
+            key = (index.row() - self.first_data_row, index.column())
+            if role == Qt.ItemDataRole.EditRole and key in self.formulas:
+                return display_formula(self.formulas[key], self.names, key[0])
             return self.rows[index.row() - self.first_data_row][index.column()]
         key = (index.row() - self.first_data_row, index.column())
         if role == Qt.ItemDataRole.ToolTipRole and key in self.formulas:
-            return self.formulas[key] + ("\n" + self.formula_errors[key] if key in self.formula_errors else "")
+            return display_formula(self.formulas[key], self.names, key[0]) + (
+                "\n" + self.formula_errors[key] if key in self.formula_errors else "")
         if role == Qt.ItemDataRole.ForegroundRole and key in self.formulas:
             return QBrush(QColor(LIGHT.error if key in self.formula_errors else LIGHT.primary))
         if role == Qt.ItemDataRole.BackgroundRole:
@@ -157,7 +175,10 @@ class MeasurementsModel(QAbstractTableModel):
         else:
             key = (index.row() - self.first_data_row, index.column())
             if text.startswith("="):
-                self.formulas[key] = text
+                try:
+                    self.formulas[key] = CellFormula(text, self.names, key[0]).canonical_text
+                except (ValueError, ArithmeticError):
+                    self.formulas[key] = text
             else:
                 self.formulas.pop(key, None)
                 self.formula_errors.pop(key, None)
@@ -198,7 +219,7 @@ class MeasurementsModel(QAbstractTableModel):
             visiting.add(key)
             try:
                 if key in self.formulas:
-                    result = CellFormula(self.formulas[key]).evaluate(resolve)
+                    result = CellFormula(self.formulas[key], self.names, row).evaluate(resolve)
                 elif column in calculated:
                     item = calculated[column]
                     if item.formula:
@@ -343,6 +364,7 @@ class MeasurementDelegate(QStyledItemDelegate):
     """Accepter les nombres français et valider la saisie avec Entrée."""
 
     advance = Signal()
+    formula_requested = Signal(QModelIndex, str, int)
 
     def createEditor(self, parent, option, index):
         if index.row() == index.model().unit_row:
@@ -353,6 +375,7 @@ class MeasurementDelegate(QStyledItemDelegate):
                              else Qt.AlignmentFlag.AlignRight) |
                             Qt.AlignmentFlag.AlignVCenter)
         if index.row() >= index.model().first_data_row:
+            editor._physalix_index = QPersistentModelIndex(index)
             expression = QRegularExpression(
                 r"(?:=[^\n]*|(?:[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?)?)"
             )
@@ -386,6 +409,22 @@ class MeasurementDelegate(QStyledItemDelegate):
             painter.restore()
 
     def eventFilter(self, editor, event):
+        if (isinstance(editor, QLineEdit) and event.type() == QEvent.Type.KeyPress
+                and event.text() == "=" and hasattr(editor, "_physalix_index")):
+            start = editor.selectionStart()
+            cursor = editor.cursorPosition()
+            before = editor.text()
+            if start >= 0:
+                after = before[:start] + "=" + before[start + len(editor.selectedText()):]
+                cursor = start + 1
+            else:
+                after = before[:cursor] + "=" + before[cursor:]
+                cursor += 1
+            if after.startswith("="):
+                index = QModelIndex(editor._physalix_index)
+                self.closeEditor.emit(editor, QAbstractItemDelegate.EndEditHint.RevertModelCache)
+                self.formula_requested.emit(index, after, cursor)
+                return True
         if event.type() == QEvent.Type.KeyPress and event.key() in (
             Qt.Key.Key_Return, Qt.Key.Key_Enter,
         ):
@@ -397,6 +436,130 @@ class MeasurementDelegate(QStyledItemDelegate):
         return super().eventFilter(editor, event)
 
 
+class FormulaEditSession:
+    """Composer une formule dans la barre tout en conservant sa cellule cible."""
+
+    def __init__(self, tab):
+        self.tab = tab
+        self.target = QPersistentModelIndex()
+        self.active = False
+        self.cursor = 0
+        self.selection = None
+
+    def begin(self, index, text=None, cursor=None):
+        model = self.tab.model
+        if (not index.isValid() or index.row() < model.first_data_row
+                or not model.flags(index) & Qt.ItemFlag.ItemIsEditable):
+            return False
+        self.target = QPersistentModelIndex(index)
+        self.active = True
+        self.clear_error()
+        bar = self.tab.formula_bar
+        value = index.data(Qt.ItemDataRole.EditRole) if text is None else text
+        bar.setText(value if str(value).startswith("=") else "=")
+        bar.setCursorPosition(len(bar.text()) if cursor is None else cursor)
+        self.remember_position()
+        self.tab.table.setCurrentIndex(index)
+        bar.setFocus()
+        self.tab.table.viewport().update()
+        return True
+
+    def insert_reference(self, index):
+        if not self.active or not self.target.isValid():
+            return False
+        if not index.isValid() or index.row() < self.tab.model.first_data_row:
+            return True
+        bar = self.tab.formula_bar
+        if self.selection:
+            bar.setSelection(*self.selection)
+        else:
+            bar.setCursorPosition(min(self.cursor, len(bar.text())))
+        reference = f"{column_label(index.column())}{index.row() - self.tab.model.first_data_row + 1}"
+        bar.insert(reference)
+        bar.setFocus()
+        self.remember_position()
+        self.clear_error()
+        self.tab.table.viewport().update()
+        return True
+
+    def remember_position(self):
+        if not self.active:
+            return
+        bar = self.tab.formula_bar
+        self.cursor = bar.cursorPosition()
+        start = bar.selectionStart()
+        self.selection = ((start, len(bar.selectedText())) if start >= 0 else None)
+
+    def referenced_indexes(self):
+        indexes = []
+        model = self.tab.model
+        if not self.active:
+            return indexes
+        for match in REFERENCES.finditer(self.tab.formula_bar.text()):
+            for reference in (match[1], match[2]):
+                if not reference:
+                    continue
+                row, column = cell_position(reference)
+                row += model.first_data_row
+                if 0 <= row < model.rowCount() and 0 <= column < model.columnCount():
+                    indexes.append(model.index(row, column))
+        return indexes
+
+    def validate(self):
+        if not self.active or not self.target.isValid():
+            self.cancel()
+            return False
+        text = self.tab.formula_bar.text().strip()
+        try:
+            target = QModelIndex(self.target)
+            CellFormula(text, self.tab.model.names,
+                        target.row() - self.tab.model.first_data_row)
+        except (ValueError, ArithmeticError) as error:
+            message = spreadsheet_formula_error_message(error)
+            self.show_error(message)
+            self.remember_position()
+            QMessageBox.warning(
+                self.tab, "Impossible de calculer la formule", message)
+            if self.active and self.target.isValid():
+                bar = self.tab.formula_bar
+                bar.setFocus()
+                if self.selection:
+                    bar.setSelection(*self.selection)
+                else:
+                    bar.setCursorPosition(min(self.cursor, len(bar.text())))
+            return False
+        self.tab.model.edit_cells({(target.row(), target.column()): text}, "Modifier une cellule")
+        self.finish(target)
+        return True
+
+    def cancel(self):
+        target = QModelIndex(self.target) if self.target.isValid() else QModelIndex()
+        self.finish(target)
+
+    def finish(self, target):
+        self.active = False
+        self.target = QPersistentModelIndex()
+        self.clear_error()
+        if target.isValid():
+            self.tab.table.setCurrentIndex(target)
+        self.tab.update_formula_bar()
+        self.tab.table.setFocus()
+        self.tab.table.viewport().update()
+
+    def target_changed(self, *args):
+        if self.active and not self.target.isValid():
+            self.cancel()
+
+    def show_error(self, message):
+        bar = self.tab.formula_bar
+        bar.setToolTip(message)
+        bar.setStyleSheet(f"QLineEdit {{ border: 2px solid {LIGHT.error}; }}")
+
+    def clear_error(self):
+        self.tab.formula_bar.setToolTip("")
+        self.tab.formula_bar.setStyleSheet("")
+
+
 class MeasurementsTable(FillTableView):
     """Déplacer la sélection vers le bas après validation."""
 
@@ -404,6 +567,7 @@ class MeasurementsTable(FillTableView):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.formula_session = None
         header = self.horizontalHeader()
         header.setSectionsMovable(True)
         header.setFirstSectionMovable(True)
@@ -543,12 +707,38 @@ class MeasurementsTable(FillTableView):
         menu.exec(event.globalPos())
 
     def mousePressEvent(self, event):
+        if self.formula_session and self.formula_session.active and event.button() == Qt.MouseButton.LeftButton:
+            self.formula_session.insert_reference(self.indexAt(event.position().toPoint()))
+            event.accept()
+            return
         super().mousePressEvent(event)
         index = self.indexAt(event.position().toPoint())
         if (event.button() == Qt.MouseButton.LeftButton and index.isValid()
                 and index.row() == self.model().unit_row
                 and self.state() != QAbstractItemView.State.EditingState):
             self.edit(index)
+
+    def mouseDoubleClickEvent(self, event):
+        index = self.indexAt(event.position().toPoint())
+        value = index.data(Qt.ItemDataRole.EditRole) if index.isValid() else ""
+        if (self.formula_session and isinstance(value, str) and value.startswith("=")
+                and self.formula_session.begin(index)):
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        session = self.formula_session
+        if not session or not session.active or not session.target.isValid():
+            return
+        painter = QPainter(self.viewport())
+        for index in session.referenced_indexes():
+            painter.setPen(QPen(QColor(LIGHT.primary_pressed), 2, Qt.PenStyle.DashLine))
+            painter.drawRect(self.visualRect(index).adjusted(2, 2, -2, -2))
+        painter.setPen(QPen(QColor(LIGHT.warning), 2))
+        painter.drawRect(self.visualRect(QModelIndex(session.target)).adjusted(1, 1, -1, -1))
+        painter.end()
 
     def advance_down(self):
         current = self.currentIndex()
@@ -580,6 +770,16 @@ class MeasurementsTable(FillTableView):
             self.paste_clipboard()
             event.accept()
             return
+        current = self.currentIndex()
+        if (event.key() == Qt.Key.Key_Equal and not event.modifiers()
+                and self.formula_session and self.formula_session.begin(current, "=")):
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_F2 and self.formula_session:
+            value = current.data(Qt.ItemDataRole.EditRole) if current.isValid() else ""
+            if isinstance(value, str) and value.startswith("=") and self.formula_session.begin(current):
+                event.accept()
+                return
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.advance_down()
             return
@@ -615,6 +815,7 @@ class DataTab(QWidget):
         self.table.add_quantity_requested.connect(self.add_quantity)
         delegate = MeasurementDelegate(self.table)
         delegate.advance.connect(self.table.advance_down)
+        delegate.formula_requested.connect(self.begin_formula_from_cell_editor)
         self.table.setItemDelegate(delegate)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setDefaultSectionSize(32)
@@ -690,6 +891,8 @@ class DataTab(QWidget):
         self.formula_bar.setAccessibleName("Valeur ou formule de la cellule")
         self.formula_bar.setPlaceholderText("Valeur ou formule, par exemple =A1*2")
         self.formula_bar.setMaximumWidth(LIGHT.formula_wide)
+        self.formula_session = FormulaEditSession(self)
+        self.table.formula_session = self.formula_session
         formula_row.addWidget(self.cell_address)
         self.formula_mark = role(QLabel("fx"), "formulaMark")
         formula_row.addWidget(self.formula_mark)
@@ -703,8 +906,11 @@ class DataTab(QWidget):
         self.table.selectionModel().currentChanged.connect(self.update_formula_bar)
         self.model.dataChanged.connect(self.update_formula_bar)
         self.model.columnsRemoved.connect(self.update_formula_bar)
+        self.model.columnsRemoved.connect(self.formula_session.target_changed)
         self.name_editor.returnPressed.connect(self.apply_name_editor)
         self.formula_bar.returnPressed.connect(self.apply_formula_bar)
+        self.formula_bar.textEdited.connect(self.formula_text_edited)
+        self.formula_bar.installEventFilter(self)
         self._unit_editor_column = None
         self._unit_editor_dirty = False
         self.unit_editor.lineEdit().textEdited.connect(self.unit_editor_changed)
@@ -714,6 +920,8 @@ class DataTab(QWidget):
         layout.addWidget(self.table)
 
     def update_formula_bar(self, *args):
+        if self.formula_session.active:
+            return
         index = self.table.currentIndex()
         valid = index.isValid() and index.column() < self.model.columnCount()
         naming = valid and index.row() == self.model.name_row
@@ -760,11 +968,38 @@ class DataTab(QWidget):
             "Modifier une unité")
 
     def apply_formula_bar(self):
+        if self.formula_session.active:
+            self.formula_session.validate()
+            return
         index = self.table.currentIndex()
         if index.isValid():
             self.model.edit_cells({(index.row(), index.column()): self.formula_bar.text()}, "Modifier une cellule")
             self.table.setFocus()
             self.update_formula_bar()
+
+    def formula_text_edited(self, text):
+        if self.formula_session.active:
+            self.formula_session.remember_position()
+            self.formula_session.clear_error()
+            self.table.viewport().update()
+            return
+        index = self.table.currentIndex()
+        if text.startswith("="):
+            self.formula_session.begin(index, text, self.formula_bar.cursorPosition())
+
+    def begin_formula_from_cell_editor(self, index, text, cursor):
+        self.formula_session.begin(index, text, cursor)
+
+    def eventFilter(self, watched, event):
+        if (watched is self.formula_bar and self.formula_session.active
+                and event.type() == QEvent.Type.FocusOut):
+            self.formula_session.remember_position()
+        if (watched is self.formula_bar and self.formula_session.active
+                and event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape):
+            self.formula_session.cancel()
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
 
     def set_quantity_symbol(self, symbol):
         index = self.table.currentIndex()

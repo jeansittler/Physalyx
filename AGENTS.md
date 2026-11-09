@@ -43,3 +43,4 @@
 - Pour tout test manuel demandé, fournir une commande PowerShell directement prête à copier.
 - Respecter la chaîne de release et de signature Authenticode Certum décrite dans `PROJECT_CONTEXT.md`. Ne jamais publier un installateur non signé ou insuffisamment vérifié.
 - L’authentification SimplySign reste interactive. Ne jamais stocker ni exposer de PIN, OTP, jeton, clé privée ou accès au compte Certum.
+- Avant une suite complète de release, utiliser un worktree propre avec les fixtures Git canoniques et exécuter le précontrôle léger de version/métadonnées. Ne construire ni signer qu’après un résumé global sans échec ni erreur, et ne jamais relancer automatiquement après un échec.

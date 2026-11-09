@@ -747,6 +747,23 @@ engagé à ce stade.
 
 ## 14. Workflow de release
 
+### Précautions de prépublication
+
+- Exécuter le pipeline depuis un worktree propre contenant les fixtures Git
+  canoniques ; ne jamais restaurer, indexer ou écraser une fixture personnelle du
+  dépôt de développement.
+- Conserver le nettoyage de fin de module dans `tests/test_tracking.py` : des
+  `MainWindow` seulement fermées peuvent rester dans le `QApplication` partagé et
+  rendre la réapplication de la feuille de style extrêmement lente. Les nouveaux
+  tests Qt doivent détruire effectivement les fenêtres qu’ils créent.
+- Écrire les tests de mise à jour relativement à la version courante, sans version
+  historique supposée future. Le précontrôle `verify_distribution.py environment`
+  valide avant la suite les versions voisines, les notes courantes et un manifeste
+  minimal.
+- Un pipeline interrompu, en timeout ou dépourvu du résumé final `unittest` n’est
+  jamais validé. Le build et la signature ne commencent qu’après une suite complète
+  terminée sans échec ni erreur ; aucune relance n’est automatique.
+
 Pour une version publique :
 
 1. vérifier branche / working tree / origin ;

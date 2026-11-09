@@ -9,7 +9,22 @@ import unittest
 from unittest.mock import patch, Mock
 from urllib.error import URLError
 
-from physalix import updates as u
+from physalix import __version__, __version_info__, updates as u
+
+
+def adjacent_version(parts, direction):
+    """Construire une version valide strictement voisine dans le sens demandé."""
+    values = list(parts)
+    for index in range(len(values) - 1, -1, -1):
+        if direction > 0 and values[index] < 65535:
+            values[index] += 1
+            values[index + 1:] = [0] * (len(values) - index - 1)
+            return ".".join(map(str, values))
+        if direction < 0 and values[index] > 0:
+            values[index] -= 1
+            values[index + 1:] = [0] * (len(values) - index - 1)
+            return ".".join(map(str, values))
+    raise AssertionError("La version courante n'a pas de voisine valide")
 
 
 def manifest_data(**changes):
@@ -135,15 +150,10 @@ class UpdateTests(unittest.TestCase):
 
     def test_stable_build_enables_release_checks(self):
         self.assertTrue(u.updates_enabled())
-        self.assertFalse(u.is_newer("1.1.3"))
-        self.assertFalse(u.is_newer("1.2.0"))
-        self.assertFalse(u.is_newer("1.2.1"))
-        self.assertFalse(u.is_newer("1.2.2"))
-        self.assertFalse(u.is_newer("1.2.3"))
-        self.assertFalse(u.is_newer("1.2.5"))
-        self.assertTrue(u.is_newer("1.2.2", "1.2.1"))
-        self.assertFalse(u.is_newer("1.5.3"))
-        self.assertTrue(u.is_newer("1.8.1"))
+        self.assertEqual(".".join(map(str, __version_info__)), __version__)
+        self.assertFalse(u.is_newer(adjacent_version(__version_info__, -1)))
+        self.assertFalse(u.is_newer(__version__))
+        self.assertTrue(u.is_newer(adjacent_version(__version_info__, 1)))
 
     def test_transport_timeout_and_redirect_security(self):
         with patch.object(u, "build_opener") as opener:
@@ -399,8 +409,10 @@ class ReleaseTests(unittest.TestCase):
                 result = json.loads(raw.decode("utf-8"))
                 self.assertEqual(result["sha256"], hashlib.sha256(content).hexdigest())
                 self.assertEqual(result["installer_url"], f"https://github.com/jeansittler/Physalix/releases/download/v{__base_version__}/Physalyx-Setup-{__base_version__}.exe")
-                self.assertEqual([entry["version"] for entry in result["changelog"]],
-                                 ["1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.3.0", "1.4.0", "1.4.1", "1.5.0", "1.5.1", "1.5.2", "1.6.0", "1.7.0", "1.8.0", "1.9.0", "1.10.0"])
+                versions = [entry["version"] for entry in result["changelog"]]
+                self.assertEqual(versions[-1], __base_version__)
+                self.assertEqual(versions, sorted(versions, key=u.version_tuple))
+                self.assertEqual(len(versions), len(set(versions)))
                 notes_124 = next(
                     entry["notes"] for entry in result["changelog"]
                     if entry["version"] == "1.2.4"

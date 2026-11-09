@@ -20,6 +20,20 @@ VERSION = VERSION_DATA["__version__"]
 VERSION_INFO = VERSION_DATA["__version_info__"]
 
 
+def adjacent_version(parts, direction):
+    values = list(parts)
+    for index in range(len(values) - 1, -1, -1):
+        if direction > 0 and values[index] < 65535:
+            values[index] += 1
+            values[index + 1:] = [0] * (len(values) - index - 1)
+            return ".".join(map(str, values))
+        if direction < 0 and values[index] > 0:
+            values[index] -= 1
+            values[index + 1:] = [0] * (len(values) - index - 1)
+            return ".".join(map(str, values))
+    raise AssertionError("Current version has no valid adjacent version")
+
+
 def avrdude_startup(executable: Path, config: Path) -> str:
     assert executable.is_file(), f"Missing AVRDUDE executable: {executable}"
     assert config.is_file(), f"Missing AVRDUDE configuration: {config}"
@@ -43,6 +57,23 @@ def environment():
             actual = importlib.metadata.version(name)
             assert actual == expected, f"{name}: {actual} != {expected}; install packaging/requirements-build.txt"
     subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
+    from physalix.release_notes import load_release_notes
+    from physalix.updates import Manifest, is_newer
+    assert not is_newer(adjacent_version(VERSION_INFO, -1))
+    assert not is_newer(VERSION)
+    assert is_newer(adjacent_version(VERSION_INFO, 1))
+    load_release_notes(require_current=True, current_version=VERSION)
+    manifest = Manifest.parse(json.dumps({
+        "version": VERSION,
+        "installer_url": (
+            f"https://github.com/jeansittler/Physalix/releases/download/"
+            f"v{VERSION}/Physalyx-Setup-{VERSION}.exe"
+        ),
+        "sha256": "0" * 64,
+        "notes": "Précontrôle de release",
+        "mandatory": False,
+    }))
+    assert manifest.version == VERSION
     print(f"Environment OK: Python {platform.python_version()}, Physalyx {VERSION}")
 
 

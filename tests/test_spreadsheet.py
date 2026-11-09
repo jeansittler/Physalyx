@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt, QTimer
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QMenu, QMessageBox
 
 from physalix.spreadsheet import CellFormula, column_label, translate_formula
@@ -621,9 +621,14 @@ class SpreadsheetTests(unittest.TestCase):
 
         self.window.calculations_tab.engine.update_formula(2, "x*2")
         self.assertEqual([row[2] for row in self.model.rows[:3]], ["2", "4", "6"])
+        recalculated = QSignalSpy(self.window.calculations_tab.engine.changed)
         self.put(1, 0, "10")
-        QTest.qWait(10)
+        if recalculated.count() == 0:
+            self.assertTrue(recalculated.wait(1000))
         self.assertEqual(self.model.rows[1][2], "20")
+        refreshed = QSignalSpy(self.window.graph_tab._refresh_timer.timeout)
+        if self.window.graph_tab._refresh_timer.isActive():
+            self.assertTrue(refreshed.wait(1000))
         self.assertEqual(list(series.points.getData()[1])[:3], [2.0, 20.0, 6.0])
 
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:

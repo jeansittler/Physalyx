@@ -347,6 +347,14 @@ class CalculationsTab(QWidget):
                 self.feedback.setText(
                     f"Calcul de {self.model.names[item.column]} modifié. Les résultats ont été recalculés.")
 
+    def edit_calculation_column(self, column):
+        """Ouvrir l'éditeur existant à partir d'une colonne logique de Données."""
+        row = next((row for row, item in enumerate(self.engine.items)
+                    if item.column == column), -1)
+        if row >= 0:
+            self.history.selectRow(row)
+            self.edit_calculation(row)
+
     def calculation_menu(self, position):
         row = self.history.rowAt(position.y())
         item = self.item_at(row)

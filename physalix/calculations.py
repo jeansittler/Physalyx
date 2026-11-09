@@ -231,6 +231,28 @@ class CalculationEngine(QObject):
         if not self.busy:
             self.timer.start(0)
 
+    def validate_formula_values(self, formula):
+        references = set(formula.references.values())
+        base_columns = set(range(self.model.columnCount())) - self.model.calculated_columns
+        candidates = valid = 0
+        for row in self.model.rows:
+            if references:
+                if any(number(row[column]) is None for column in references):
+                    continue
+            elif not any(row[column] for column in base_columns):
+                continue
+            candidates += 1
+            try:
+                formula.evaluate(row)
+                valid += 1
+            except (ArithmeticError, ValueError):
+                pass
+        if candidates and not valid:
+            raise FormulaError(
+                "math",
+                "La formule est mathématiquement impossible pour toutes les lignes numériques du tableau.",
+            )
+
     def add(self, name, unit, *, source=None, axis=None, expression=None):
         name = name.strip()
         if not name:
@@ -239,30 +261,12 @@ class CalculationEngine(QObject):
             raise ValueError("Ce nom existe déjà. Choisissez un autre nom pour la nouvelle grandeur.")
         formula = Formula(expression, self.model.names) if expression is not None else None
         if formula is not None:
-            references = set(formula.references.values())
-            base_columns = set(range(self.model.columnCount())) - self.model.calculated_columns
-            candidates = valid = 0
-            for row in self.model.rows:
-                if references:
-                    if any(number(row[column]) is None for column in references):
-                        continue
-                elif not any(row[column] for column in base_columns):
-                    continue
-                candidates += 1
-                try:
-                    formula.evaluate(row)
-                    valid += 1
-                except (ArithmeticError, ValueError):
-                    pass
-            if candidates and not valid:
-                raise FormulaError(
-                    "math",
-                    "La formule est mathématiquement impossible pour toutes les lignes numériques du tableau.",
-                )
+            self.validate_formula_values(formula)
         if formula is None and (source is None or axis is None or source == axis
                                 or not 0 <= source < self.model.columnCount()
                                 or not 0 <= axis < self.model.columnCount()):
             raise ValueError("Choisissez deux grandeurs distinctes à dériver et en abscisse.")
+        self.model.undo_stack.clear()
         self.busy = True
         try:
             column = self.model.columnCount()
@@ -281,10 +285,10 @@ class CalculationEngine(QObject):
         self.recalculate()
         return column
 
-    def ordered_items(self, dependencies=None):
+    def ordered_items(self, dependencies=None, items=None):
         """Calculer les sources avant leurs dépendants, sans changer l'ordre affiché."""
         dependencies = self.model.column_dependencies if dependencies is None else dependencies
-        pending = list(self.items)
+        pending = list(self.items if items is None else items)
         ordered = []
         while pending:
             columns = {item.column for item in pending}
@@ -296,6 +300,52 @@ class CalculationEngine(QObject):
             pending = [item for item in pending if item.column not in ready_columns]
         return ordered
 
+    def prepare_existing_formula(self, column, expression):
+        """Valider l'adoption d'une colonne sans modifier le modèle."""
+        if (not 0 <= column < self.model.columnCount()
+                or column in self.model.calculated_columns):
+            raise ValueError("Cette grandeur est déjà calculée ou n’est plus disponible.")
+        formula = Formula(expression, self.model.names)
+        self.validate_formula_values(formula)
+        item = Calculation(column, "formula", formula=formula)
+        item.previous_unit = self.model.units[column].strip()
+        dependencies = dict(self.model.column_dependencies)
+        dependencies[column] = set(formula.references.values())
+        self.ordered_items(dependencies, self.items + [item])
+        return item, dependencies[column]
+
+    def adopt_existing_formula(self, column, expression):
+        """Faire d'une colonne existante une grandeur calculée, après validation complète."""
+        item, dependencies = self.prepare_existing_formula(column, expression)
+        self.busy = True
+        try:
+            self.model.formulas = {
+                key: text for key, text in self.model.formulas.items() if key[1] != column}
+            self.model.formula_errors = {
+                key: text for key, text in self.model.formula_errors.items() if key[1] != column}
+            self.model.calculated_columns.add(column)
+            self.model.column_dependencies[column] = dependencies
+            self.items.append(item)
+        finally:
+            self.busy = False
+        self.recalculate()
+        return item
+
+    def release_existing_formula(self, column):
+        """Retirer seulement la définition calculée, sans supprimer sa colonne."""
+        item = next((entry for entry in self.items if entry.column == column), None)
+        if item is None:
+            raise ValueError("Cette grandeur calculée n’est plus disponible.")
+        self.busy = True
+        try:
+            self.items.remove(item)
+            self.model.calculated_columns.discard(column)
+            self.model.column_dependencies.pop(column, None)
+        finally:
+            self.busy = False
+        self.changed.emit()
+        return item
+
     def update_formula(self, column, expression):
         item = next((item for item in self.items if item.column == column and item.formula is not None), None)
         if item is None:
@@ -304,6 +354,7 @@ class CalculationEngine(QObject):
         dependencies = dict(self.model.column_dependencies)
         dependencies[column] = set(formula.references.values())
         self.ordered_items(dependencies)  # Tout valider avant de remplacer le calcul.
+        self.model.undo_stack.clear()
         item.formula = formula
         self.model.column_dependencies[column] = dependencies[column]
         self.recalculate()
@@ -325,6 +376,7 @@ class CalculationEngine(QObject):
         dependencies = dict(self.model.column_dependencies)
         dependencies[column] = {source, axis}
         self.ordered_items(dependencies)
+        self.model.undo_stack.clear()
         self.busy = True
         try:
             self.model.setData(self.model.index(0, column), name)

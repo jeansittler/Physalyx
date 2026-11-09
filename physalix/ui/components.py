@@ -49,16 +49,16 @@ def label(text, kind="sectionTitle"):
     return widget
 
 
-def ask_yes_no(parent, title, text):
+def ask_yes_no(parent, title, text, accept_text="Oui", reject_text="Non"):
     """Afficher une confirmation avec des libellés français explicites."""
     dialog = QMessageBox(parent)
     dialog.setIcon(QMessageBox.Icon.Question)
     dialog.setWindowTitle(title)
     dialog.setText(text)
     yes_button = role(
-        dialog.addButton("Oui", QMessageBox.ButtonRole.AcceptRole), "primary"
+        dialog.addButton(accept_text, QMessageBox.ButtonRole.AcceptRole), "primary"
     )
-    no_button = dialog.addButton("Non", QMessageBox.ButtonRole.RejectRole)
+    no_button = dialog.addButton(reject_text, QMessageBox.ButtonRole.RejectRole)
     dialog.setDefaultButton(no_button)
     dialog.setEscapeButton(no_button)
     dialog.exec()

@@ -18,13 +18,14 @@ from PySide6.QtWidgets import (
 from physalix.ui.fill_table import FillTableView
 from physalix.ui.units import unit_combo
 from physalix.ui.theme import LIGHT
-from physalix.ui.components import help_toggle, page_layout, panel, role
+from physalix.ui.components import ask_yes_no, help_toggle, page_layout, panel, role
 from physalix.ui.icons import icon
 from physalix.ui.math_help import math_help_button
 from physalix.ui.scientific_symbols import replace_name, scientific_symbol_button
+from physalix.calculations import Formula
 from physalix.spreadsheet import (CellFormula, CellError, REFERENCES, cell_position,
-                                 column_label, display_formula, remove_formula_column,
-                                 translate_formula)
+                                 calculation_expression_from_cell, column_label,
+                                 display_formula, remove_formula_column, translate_formula)
 
 
 def spreadsheet_formula_error_message(error):
@@ -62,6 +63,33 @@ class CellEdit(QUndoCommand):
 
     def redo(self):
         self.apply(self.after)
+
+
+class AdoptCalculatedColumn(QUndoCommand):
+    """Adopter une colonne existante en conservant son contenu pour l'annulation."""
+
+    def __init__(self, model, column, expression):
+        super().__init__("Appliquer une formule à toute une grandeur")
+        self.model, self.column, self.expression = model, column, expression
+        self.values = [row[column] for row in model.rows]
+        self.formulas = {key: text for key, text in model.formulas.items() if key[1] == column}
+        self.errors = {key: text for key, text in model.formula_errors.items() if key[1] == column}
+
+    def redo(self):
+        self.model.calculation_engine.adopt_existing_formula(self.column, self.expression)
+
+    def undo(self):
+        self.model.calculation_engine.release_existing_formula(self.column)
+        for row, value in zip(self.model.rows, self.values):
+            row[self.column] = value
+        self.model.formulas.update(self.formulas)
+        self.model.formula_errors.update(self.errors)
+        self.model.dataChanged.emit(
+            self.model.index(self.model.first_data_row, self.column),
+            self.model.index(self.model.rowCount() - 1, self.column),
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole],
+        )
+        self.model.recalculate_cells()
 
 
 class MoveColumn(QUndoCommand):
@@ -460,6 +488,8 @@ class FormulaEditSession:
         bar.setCursorPosition(len(bar.text()) if cursor is None else cursor)
         self.remember_position()
         self.tab.table.setCurrentIndex(index)
+        if hasattr(self.tab, "apply_quantity_button"):
+            self.tab.apply_quantity_button.hide()
         bar.setFocus()
         self.tab.table.viewport().update()
         return True
@@ -564,6 +594,7 @@ class MeasurementsTable(FillTableView):
     """Déplacer la sélection vers le bas après validation."""
 
     add_quantity_requested = Signal()
+    edit_calculation_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -581,6 +612,7 @@ class MeasurementsTable(FillTableView):
         column = header.logicalIndexAt(position)
         menu = QMenu(self)
         if column >= 0:
+            self.add_edit_calculation_action(menu, column)
             menu.addAction("Supprimer la grandeur…", lambda: self.delete_quantity(column))
             menu.addSeparator()
         menu.addAction("Nouvelle grandeur", self.add_quantity_requested.emit)
@@ -699,12 +731,95 @@ class MeasurementsTable(FillTableView):
         copy.setEnabled(bool(self.selectedIndexes()))
         paste = menu.addAction("Coller\tCtrl+V", self.paste_clipboard)
         paste.setEnabled(self.currentIndex().isValid() and bool(QApplication.clipboard().text()))
+        self.add_edit_calculation_action(menu, index.column() if index.isValid() else -1)
+        self.add_apply_formula_action(menu, index)
         if index.isValid() and index.row() == self.model().name_row:
             menu.addSeparator()
             menu.addAction("Supprimer la grandeur…", lambda: self.delete_quantity(index.column()))
         menu.addSeparator()
         menu.addAction("Nouvelle grandeur", self.add_quantity_requested.emit)
         menu.exec(event.globalPos())
+
+    def add_edit_calculation_action(self, menu, column):
+        if column not in self.model().calculated_columns:
+            return None
+        menu.addSeparator()
+        return menu.addAction(
+            "Modifier le calcul…",
+            lambda: self.edit_calculation_requested.emit(column),
+        )
+
+    def add_apply_formula_action(self, menu, index):
+        if not self.can_apply_formula(index):
+            return None
+        menu.addSeparator()
+        return menu.addAction(
+            "Appliquer à toute la grandeur…",
+            lambda: self.apply_formula_to_quantity(index),
+        )
+
+    def can_apply_formula(self, index):
+        key = (index.row() - self.model().first_data_row, index.column()) if index.isValid() else None
+        return bool(
+            key in self.model().formulas
+            and self.model().calculation_engine is not None
+            and index.column() not in self.model().calculated_columns
+        )
+
+    def apply_formula_to_quantity(self, index):
+        model = self.model()
+        key = (index.row() - model.first_data_row, index.column())
+        if key not in model.formulas or model.calculation_engine is None:
+            return
+        try:
+            definitions = {
+                Formula(
+                    calculation_expression_from_cell(text, model.names, row),
+                    model.names,
+                ).editable_expression(model.names)
+                for (row, column), text in model.formulas.items() if column == index.column()
+            }
+            if len(definitions) != 1:
+                raise ValueError(
+                    "Cette grandeur contient plusieurs formules différentes. "
+                    "Harmonisez-les avant de l’appliquer à toute la grandeur.")
+            expression = definitions.pop()
+            model.calculation_engine.prepare_existing_formula(index.column(), expression)
+        except ValueError as error:
+            QMessageBox.warning(
+                self, "Application impossible", str(error))
+            return
+
+        formulas = sum(column == index.column() for row, column in model.formulas)
+        manual = sum(
+            bool(row[index.column()]) and (number, index.column()) not in model.formulas
+            for number, row in enumerate(model.rows)
+        )
+        replacements = []
+        if formulas == 1:
+            replacements.append("La formule ponctuelle existante sera remplacée par les résultats calculés.")
+        elif formulas > 1:
+            replacements.append(
+                f"Les {formulas} formules ponctuelles existantes seront remplacées par les résultats calculés.")
+        if manual == 1:
+            replacements.append("La valeur saisie existante sera remplacée.")
+        elif manual > 1:
+            replacements.append(f"Les {manual} valeurs saisies existantes seront remplacées.")
+        name = model.names[index.column()] or f"Grandeur {index.column() + 1}"
+        message = (
+            f"Souhaitez-vous appliquer cette formule à toutes les lignes de la grandeur « {name} » ?\n\n"
+            f"Formule : {expression}\n\n"
+            "Les valeurs de cette colonne seront calculées automatiquement. "
+            "Vous pourrez modifier cette formule à tout moment, directement depuis le tableau "
+            "ou dans l’onglet Calculs.\n\n"
+            + ("\n".join(replacements) if replacements
+               else "Les cellules de la colonne seront remplies automatiquement.")
+        )
+        if not ask_yes_no(
+                self, "Créer une grandeur calculée", message,
+                "Créer la grandeur calculée", "Annuler"):
+            return
+        model.undo_stack.push(AdoptCalculatedColumn(model, index.column(), expression))
 
     def mousePressEvent(self, event):
         if self.formula_session and self.formula_session.active and event.button() == Qt.MouseButton.LeftButton:
@@ -720,6 +835,11 @@ class MeasurementsTable(FillTableView):
 
     def mouseDoubleClickEvent(self, event):
         index = self.indexAt(event.position().toPoint())
+        if (index.isValid() and index.row() >= self.model().first_data_row
+                and index.column() in self.model().calculated_columns):
+            self.edit_calculation_requested.emit(index.column())
+            event.accept()
+            return
         value = index.data(Qt.ItemDataRole.EditRole) if index.isValid() else ""
         if (self.formula_session and isinstance(value, str) and value.startswith("=")
                 and self.formula_session.begin(index)):
@@ -897,6 +1017,15 @@ class DataTab(QWidget):
         self.formula_mark = role(QLabel("fx"), "formulaMark")
         formula_row.addWidget(self.formula_mark)
         formula_row.addWidget(self.formula_bar, 1)
+        self.apply_quantity_button = QPushButton("Appliquer à toute la grandeur…")
+        self.apply_quantity_button.setMaximumWidth(LIGHT.action_wide)
+        self.apply_quantity_button.setMinimumWidth(0)
+        self.apply_quantity_button.setToolTip(
+            "Transformer la formule de cette cellule en calcul automatique pour toute la grandeur")
+        self.apply_quantity_button.clicked.connect(
+            lambda: self.table.apply_formula_to_quantity(self.table.currentIndex()))
+        self.apply_quantity_button.hide()
+        formula_row.addWidget(self.apply_quantity_button)
         self.math_help_button = math_help_button(self, spreadsheet=True)
         formula_row.addWidget(self.math_help_button)
         for context in (self.name_context, self.unit_context, self.data_context):
@@ -941,6 +1070,9 @@ class DataTab(QWidget):
         self.formula_bar.setEnabled(
             valid and not naming and not unit
             and bool(self.model.flags(index) & Qt.ItemFlag.ItemIsEditable))
+        can_apply = self.table.can_apply_formula(index)
+        self.apply_quantity_button.setEnabled(can_apply)
+        self.apply_quantity_button.setVisible(can_apply)
         self.cell_address.setText((column_label(index.column()) +
                                   (str(index.row() - 1) if index.row() >= 2 else " · " + ("Nom" if index.row() == 0 else "Unité")))
                                  if valid else "—")

@@ -70,6 +70,8 @@ class MainWindow(QMainWindow, ProjectFiles):
         video_index = self.tabs.addTab(self.video_tab, "Pointage")
         self.tabs.setTabToolTip(video_index, "Pointage vidéo")
         self.calculations_tab = CalculationsTab(self.data_tab.model)
+        self.data_tab.table.edit_calculation_requested.connect(
+            self.calculations_tab.edit_calculation_column)
         self.tabs.addTab(self.calculations_tab, "Calculs")
         self.statistics_tab = StatisticsTab(self.data_tab)
         self.tabs.addTab(self.statistics_tab, "Statistiques")

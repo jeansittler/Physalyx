@@ -45,6 +45,7 @@ def quantity_name(names, column):
 
 def canonicalize_formula(expression, names):
     """Remplacer les noms scientifiques par des références de colonnes stables."""
+    expression = expression.replace("²", "^2").replace("³", "^3")
     def replace_identifier(match):
         name = match[1]
         if expression[max(0, match.start() - 2):match.start()] == "[[" and expression[match.end():match.end() + 2] == "]]":
@@ -221,3 +222,34 @@ class CellFormula:
         if not isinstance(value, (float, int)) or not math.isfinite(value):
             raise ValueError("Le résultat doit être un nombre fini.")
         return value
+
+
+def calculation_expression_from_cell(text, names, current_row):
+    """Traduire une formule strictement mono-ligne vers les références de Calculs."""
+    canonical = CellFormula(text, names, current_row).canonical_text
+    quantities = []
+
+    def mask_quantity(match):
+        placeholder = f"__physalix_quantity_{len(quantities)}__"
+        quantities.append((placeholder, int(match[1])))
+        return placeholder
+
+    canonical = QUANTITY_REFERENCE.sub(mask_quantity, canonical)
+
+    def explicit_reference(match):
+        if match[2] is not None:
+            raise ValueError(
+                "Cette formule utilise une plage de cellules. Elle peut être recopiée, "
+                "mais pas appliquée directement à toute la grandeur.")
+        parts = re.fullmatch(r"(\$?)([A-Za-z]+)(\$?)([1-9][0-9]*)", match[1])
+        row, column = cell_position(match[1])
+        if parts[3] or row != current_row:
+            raise ValueError(
+                "Cette formule utilise des valeurs de plusieurs lignes. Elle peut être "
+                "recopiée dans le tableur, mais pas appliquée directement à toute la grandeur.")
+        return f"C{column + 1}"
+
+    expression = REFERENCES.sub(explicit_reference, canonical)
+    for placeholder, column in quantities:
+        expression = expression.replace(placeholder, f"C{column + 1}")
+    return expression[1:]

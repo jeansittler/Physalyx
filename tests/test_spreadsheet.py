@@ -8,14 +8,15 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QPoint, QRect, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QMenu, QMessageBox
 
 from physalix.spreadsheet import CellFormula, column_label, translate_formula
 from physalix.project import read_project, write_project
 from physalix.ui.main_window import MainWindow
 from physalix.ui.project_state import restore, snapshot
+from physalix.ui.components import ask_yes_no
 from physalix.ui.theme import LIGHT
 
 
@@ -561,6 +562,355 @@ class SpreadsheetTests(unittest.TestCase):
                 reopened._discard_on_close = True
                 reopened.close()
                 self.app.processEvents()
+
+    def test_apply_cell_formula_to_existing_calculated_quantity_roundtrip_and_undo(self):
+        self.model.add_quantity()
+        self.model.edit_cells({(self.model.name_row, 2): "z", (self.model.unit_row, 2): "m"})
+        for row, values in enumerate((("1", "2"), ("2", "4"), ("3", "6"))):
+            for column, value in enumerate(values):
+                self.put(row, column, value)
+        self.put(0, 2, "=x+y")
+        self.put(1, 2, "99")
+        original = [row[2] for row in self.model.rows]
+        original_formulas = dict(self.model.formulas)
+        target = self.model.index(2, 2)
+
+        menu = QMenu(self.table)
+        action = self.table.add_apply_formula_action(menu, target)
+        self.assertEqual(action.text(), "Appliquer à toute la grandeur…")
+
+        with patch("physalix.ui.data_tab.ask_yes_no", return_value=False) as confirmation:
+            self.table.apply_formula_to_quantity(target)
+        self.assertEqual(confirmation.call_args.args[1], "Créer une grandeur calculée")
+        self.assertEqual(
+            confirmation.call_args.args[3:],
+            ("Créer la grandeur calculée", "Annuler"),
+        )
+        self.assertIn("Formule : x + y", confirmation.call_args.args[2])
+        self.assertIn("directement depuis le tableau", confirmation.call_args.args[2])
+        self.assertIn("La formule ponctuelle existante sera remplacée", confirmation.call_args.args[2])
+        self.assertIn("La valeur saisie existante sera remplacée", confirmation.call_args.args[2])
+        self.assertNotIn(2, self.model.calculated_columns)
+        self.assertEqual([row[2] for row in self.model.rows], original)
+        with patch("physalix.ui.data_tab.ask_yes_no", return_value=True):
+            self.table.apply_formula_to_quantity(target)
+        self.assertEqual(self.model.columnCount(), 3)
+        self.assertEqual((self.model.names[2], self.model.units[2]), ("z", "m"))
+        self.assertEqual(self.model.calculated_columns, {2})
+        self.assertEqual(self.model.column_dependencies[2], {0, 1})
+        self.assertEqual([row[2] for row in self.model.rows[:3]], ["3", "6", "9"])
+        with self.assertRaisesRegex(ValueError, "déjà calculée"):
+            self.window.calculations_tab.engine.prepare_existing_formula(2, "x+y")
+        self.assertIsNone(self.table.add_apply_formula_action(QMenu(self.table), target))
+        self.assertFalse(any(column == 2 for row, column in self.model.formulas))
+        self.assertEqual(self.window.calculations_tab.history.rowCount(), 1)
+        series = self.window.graph_tab.series[0]
+        self.window.graph_tab.sync_columns()
+        series.y_choice.setCurrentIndex(series.y_choice.findData(2))
+        self.window.graph_tab.refresh_plot()
+        self.app.processEvents()
+        self.assertEqual(list(series.points.getData()[1])[:3], [3.0, 6.0, 9.0])
+
+        self.model.undo_stack.undo()
+        self.assertNotIn(2, self.model.calculated_columns)
+        self.assertEqual([row[2] for row in self.model.rows], original)
+        self.assertEqual(self.model.formulas, original_formulas)
+        self.assertEqual(self.window.calculations_tab.history.rowCount(), 0)
+        self.model.undo_stack.redo()
+        self.assertEqual([row[2] for row in self.model.rows[:3]], ["3", "6", "9"])
+
+        self.window.calculations_tab.engine.update_formula(2, "x*2")
+        self.assertEqual([row[2] for row in self.model.rows[:3]], ["2", "4", "6"])
+        self.put(1, 0, "10")
+        QTest.qWait(10)
+        self.assertEqual(self.model.rows[1][2], "20")
+        self.assertEqual(list(series.points.getData()[1])[:3], [2.0, 20.0, 6.0])
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            path = Path(directory) / "grandeur-calculee.physalix"
+            write_project(path, snapshot(self.window))
+            reopened = MainWindow()
+            try:
+                restore(reopened, read_project(path), path)
+                restored = reopened.data_tab.model
+                self.assertEqual(restored.columnCount(), 3)
+                self.assertEqual(restored.calculated_columns, {2})
+                self.assertEqual(restored.rows[1][2], "20")
+                self.assertEqual(reopened.calculations_tab.history.rowCount(), 1)
+            finally:
+                reopened._discard_on_close = True
+                reopened.close()
+                self.app.processEvents()
+        with patch("sys.excepthook") as exception_hook:
+            QTest.qWait(10)
+        exception_hook.assert_not_called()
+
+    def test_apply_cell_formula_accepts_same_row_a1_and_refuses_unsafe_definitions(self):
+        self.model.add_quantity()
+        self.model.edit_cells({(self.model.name_row, 2): "z"})
+        for row, values in enumerate((("1", "2"), ("2", "4"))):
+            for column, value in enumerate(values):
+                self.put(row, column, value)
+        self.put(0, 2, "=A1+B1")
+        self.put(1, 2, "=A2+B2")
+        with patch("physalix.ui.data_tab.ask_yes_no", return_value=True) as confirmation:
+            self.table.apply_formula_to_quantity(self.model.index(2, 2))
+        self.assertIn("Les 2 formules ponctuelles existantes seront remplacées", confirmation.call_args.args[2])
+        self.assertEqual([row[2] for row in self.model.rows[:2]], ["3", "6"])
+        self.model.undo_stack.undo()
+
+        for formula, message in (("=A1+B2", "plusieurs lignes"),
+                                 ("=SOMME(A1:A2)", "plage"),
+                                 ("=$A$2+B2", "plusieurs lignes"),
+                                 ("=z+x", "circulaire")):
+            self.model.formulas = {(1, 2): formula}
+            self.model.rows[1][2] = "inchangé"
+            with patch.object(QMessageBox, "warning") as warning:
+                self.table.apply_formula_to_quantity(self.model.index(3, 2))
+            self.assertEqual(warning.call_count, 1)
+            self.assertIn(message, warning.call_args.args[2])
+            self.assertEqual(self.model.rows[1][2], "inchangé")
+            self.assertNotIn(2, self.model.calculated_columns)
+
+        self.model.formulas = {(0, 2): "=A1+B1", (1, 2): "=A2*B2"}
+        before = [row[2] for row in self.model.rows]
+        with patch.object(QMessageBox, "warning") as warning:
+            self.table.apply_formula_to_quantity(self.model.index(2, 2))
+        self.assertIn("plusieurs formules différentes", warning.call_args.args[2])
+        self.assertEqual([row[2] for row in self.model.rows], before)
+        self.assertNotIn(2, self.model.calculated_columns)
+
+    def test_new_calculation_dependency_invalidates_unsafe_promotion_undo(self):
+        self.model.add_quantity()
+        self.model.edit_cells({(self.model.name_row, 2): "v"})
+        self.put(0, 0, "3")
+        self.put(0, 1, "4")
+        self.put(0, 2, "=sqrt(x^2+y^2)")
+        with patch("physalix.ui.data_tab.ask_yes_no", return_value=True):
+            self.table.apply_formula_to_quantity(self.model.index(2, 2))
+        self.assertTrue(self.model.undo_stack.canUndo())
+        dependent = self.window.calculations_tab.engine.add("Ec", "J", expression="v^2")
+        self.assertFalse(self.model.undo_stack.canUndo())
+        self.assertEqual(self.model.column_dependencies[dependent], {2})
+        self.assertEqual(self.model.rows[0][2], "5")
+        self.assertEqual(self.model.rows[0][dependent], "25")
+        self.assertEqual(self.model.quantities_to_remove(2), [2, dependent])
+        self.model.remove_quantity(2)
+        QTest.qWait(10)
+        self.assertEqual(self.model.names, ["x", "y"])
+        self.assertEqual(self.window.calculations_tab.engine.items, [])
+
+    def test_adopted_quantity_references_typographic_syntax_and_calculation_chain(self):
+        self.model.add_quantity()
+        self.model.add_quantity()
+        for column, name in enumerate(("vx", "vy", "v", "Ec")):
+            self.model.edit_cells({(self.model.name_row, column): name})
+        for row, values in enumerate((("3", "4"), ("5", "12"), ("8", "15"))):
+            for column, value in enumerate(values):
+                self.put(row, column, value)
+        engine = self.window.calculations_tab.engine
+        engine.adopt_existing_formula(2, "sqrt(vx^2+vy^2)")
+        self.assertEqual([row[2] for row in self.model.rows[:3]], ["5", "13", "17"])
+
+        self.select(2, 3)
+        QTest.keyClick(self.table, Qt.Key.Key_Equal)
+        self.tab.formula_bar.setText("=0,5*v²")
+        self.tab.formula_bar.setCursorPosition(len(self.tab.formula_bar.text()))
+        QTest.keyClick(self.tab.formula_bar, Qt.Key.Key_Return)
+        self.assertAlmostEqual(float(self.model.rows[0][3]), 12.5)
+
+        expected = (5.0, 5.0, 25.0, 25.0, 12.5, 12.5, 12.5, 12.5)
+        formulas = ("=C1", "=v", "=C1^2", "=v^2", "=0.5*C1^2", "=0.5*v^2",
+                    "=0,5*C1²", "=0,5*v²")
+        for formula, result in zip(formulas, expected):
+            with self.subTest(formula=formula):
+                self.put(0, 3, formula)
+                self.assertAlmostEqual(float(self.model.rows[0][3]), result)
+
+        target = self.model.index(2, 3)
+        self.select(2, 3)
+        self.app.processEvents()
+        self.assertTrue(self.tab.apply_quantity_button.isVisible())
+        self.assertTrue(self.tab.apply_quantity_button.isEnabled())
+        self.assertNotEqual(self.tab.apply_quantity_button.property("role"), "quiet")
+        for width, height in ((1366, 768), (1100, 700)):
+            self.window.resize(width, height)
+            self.app.processEvents()
+            button = QRect(self.tab.apply_quantity_button.mapTo(self.tab, QPoint()),
+                           self.tab.apply_quantity_button.size())
+            help_button = QRect(self.tab.math_help_button.mapTo(self.tab, QPoint()),
+                                self.tab.math_help_button.size())
+            formula_bar = QRect(self.tab.formula_bar.mapTo(self.tab, QPoint()),
+                                self.tab.formula_bar.size())
+            self.assertFalse(button.intersects(help_button))
+            self.assertFalse(button.intersects(formula_bar))
+
+        with patch("physalix.ui.data_tab.ask_yes_no", return_value=True):
+            self.tab.apply_quantity_button.click()
+        self.assertFalse(self.tab.apply_quantity_button.isVisible())
+        self.assertFalse(self.tab.apply_quantity_button.isEnabled())
+        self.assertEqual([float(row[3]) for row in self.model.rows[:3]], [12.5, 84.5, 144.5])
+        self.assertEqual(self.model.column_dependencies[3], {2})
+
+        self.put(0, 0, "6")
+        QTest.qWait(10)
+        self.assertAlmostEqual(float(self.model.rows[0][2]), 52 ** 0.5)
+        self.assertAlmostEqual(float(self.model.rows[0][3]), 26.0)
+        self.model.edit_cells({(self.model.name_row, 2): "vitesse"})
+        self.assertIn("vitesse", engine.items[1].formula.editable_expression(self.model.names))
+        self.table.horizontalHeader().moveSection(2, 0)
+        self.assertEqual(self.model.column_dependencies[3], {2})
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            path = Path(directory) / "chaine-calculee.physalix"
+            write_project(path, snapshot(self.window))
+            reopened = MainWindow()
+            try:
+                restore(reopened, read_project(path), path)
+                restored = reopened.data_tab.model
+                self.assertEqual(restored.calculated_columns, {2, 3})
+                self.assertEqual(restored.column_dependencies[3], {2})
+                self.assertAlmostEqual(float(restored.rows[0][3]), 26.0)
+            finally:
+                reopened._discard_on_close = True
+                reopened.close()
+                self.app.processEvents()
+
+    def test_apply_confirmation_uses_french_buttons(self):
+        labels = []
+        def inspect():
+            dialog = self.app.activeModalWidget()
+            labels.extend(button.text() for button in dialog.buttons())
+            dialog.reject()
+        QTimer.singleShot(0, inspect)
+        self.assertFalse(ask_yes_no(self.table, "Titre", "Question"))
+        self.assertEqual(set(labels), {"Oui", "Non"})
+
+        labels.clear()
+        QTimer.singleShot(0, inspect)
+        self.assertFalse(ask_yes_no(
+            self.table, "Créer une grandeur calculée", "Question",
+            "Créer la grandeur calculée", "Annuler"))
+        self.assertEqual(set(labels), {"Créer la grandeur calculée", "Annuler"})
+
+    def test_calculated_cells_reuse_calculations_editors_from_data(self):
+        self.model.add_quantity()
+        self.model.edit_cells({(self.model.name_row, 2): "v"})
+        for row, values in enumerate((("1", "2"), ("2", "4"), ("3", "6"))):
+            for column, value in enumerate(values):
+                self.put(row, column, value)
+        engine = self.window.calculations_tab.engine
+        engine.adopt_existing_formula(2, "x+y")
+        dependent = engine.add("Ec", "J", expression="v^2")
+
+        def save_formula(dialog):
+            self.assertEqual(dialog.windowTitle(), "Modifier la formule")
+            dialog.expression.setText("x*3")
+            dialog.save()
+            return dialog.result()
+
+        with patch("physalix.ui.calculations_tab.FormulaEditDialog.exec", save_formula):
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(self.model.index(3, 2)).center(),
+            )
+        self.assertEqual([row[2] for row in self.model.rows[:3]], ["3", "6", "9"])
+        self.assertEqual([row[dependent] for row in self.model.rows[:3]], ["9", "36", "81"])
+
+        self.model.edit_cells({(self.model.name_row, 2): "vitesse"})
+        self.table.horizontalHeader().moveSection(2, 0)
+        menu = QMenu(self.table)
+        action = self.table.add_edit_calculation_action(menu, 2)
+        self.assertEqual(action.text(), "Modifier le calcul…")
+        with patch("physalix.ui.calculations_tab.FormulaEditDialog.exec",
+                   return_value=QDialog.DialogCode.Rejected) as edit:
+            action.trigger()
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(self.model.index(4, 2)).center(),
+            )
+        self.assertEqual(edit.call_count, 2)
+        self.assertEqual(engine.items[0].formula.editable_expression(self.model.names), "x * 3")
+
+        header_actions = []
+        header = self.table.horizontalHeader()
+        header_position = QPoint(header.sectionViewportPosition(2) + 2, header.height() // 2)
+        def inspect_header_menu():
+            popup = self.app.activePopupWidget()
+            header_actions.extend(action.text() for action in popup.actions())
+            popup.close()
+        QTimer.singleShot(0, inspect_header_menu)
+        self.table.header_context_menu(header_position)
+        self.assertIn("Modifier le calcul…", header_actions)
+
+        derivative = engine.add("dx", "", source=0, axis=1)
+        def save_derivative(dialog):
+            self.assertEqual(dialog.windowTitle(), "Modifier la dérivée")
+            dialog.source.setCurrentIndex(dialog.source.findData(1))
+            dialog.axis.setCurrentIndex(dialog.axis.findData(0))
+            dialog.save()
+            return dialog.result()
+
+        with patch("physalix.ui.calculations_tab.DerivativeEditDialog.exec", save_derivative):
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(self.model.index(3, derivative)).center(),
+            )
+        derivative_item = next(item for item in engine.items if item.column == derivative)
+        self.assertIsNone(derivative_item.formula)
+        self.assertEqual((derivative_item.source, derivative_item.axis), (1, 0))
+        self.assertEqual(self.model.rows[1][derivative], "2")
+
+        ordinary = self.model.index(3, 0)
+        with patch.object(self.table, "edit_calculation_requested") as requested:
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(ordinary).center(),
+            )
+            requested.emit.assert_not_called()
+        self.assertTrue(self.model.flags(ordinary) & Qt.ItemFlag.ItemIsEditable)
+
+    def test_data_formula_editor_rejects_cycle_without_mutation(self):
+        self.model.add_quantity()
+        self.model.edit_cells({(self.model.name_row, 2): "v"})
+        self.put(0, 0, "1")
+        self.put(0, 1, "2")
+        engine = self.window.calculations_tab.engine
+        engine.adopt_existing_formula(2, "x+y")
+        before = (engine.items[0].formula.editable_expression(self.model.names),
+                  self.model.rows[0][2])
+
+        def reject_cycle(dialog):
+            dialog.expression.setText("v+1")
+            dialog.save()
+            return dialog.result()
+
+        with patch("physalix.ui.calculations_tab.FormulaEditDialog.exec", reject_cycle), \
+                patch("physalix.ui.calculations_tab.QMessageBox.warning") as warning:
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(self.model.index(2, 2)).center(),
+            )
+        warning.assert_called_once()
+        self.assertIn("elle-même", warning.call_args.args[2])
+        self.assertEqual((engine.items[0].formula.editable_expression(self.model.names),
+                          self.model.rows[0][2]), before)
+
+        def reject_syntax(dialog):
+            dialog.expression.setText("sqrt(")
+            dialog.save()
+            return dialog.result()
+
+        with patch("physalix.ui.calculations_tab.FormulaEditDialog.exec", reject_syntax), \
+                patch("physalix.ui.calculations_tab.QMessageBox.warning") as syntax_warning:
+            QTest.mouseDClick(
+                self.table.viewport(), Qt.MouseButton.LeftButton,
+                pos=self.table.visualRect(self.model.index(2, 2)).center(),
+            )
+        syntax_warning.assert_called_once()
+        self.assertIn("syntaxe", syntax_warning.call_args.args[2])
+        self.assertEqual((engine.items[0].formula.editable_expression(self.model.names),
+                          self.model.rows[0][2]), before)
 
 
 class FormulaSyntaxTests(unittest.TestCase):

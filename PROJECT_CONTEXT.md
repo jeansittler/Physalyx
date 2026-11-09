@@ -225,7 +225,10 @@ Conventions durables :
 - les références scientifiques sont conservées sous une forme interne liée aux colonnes logiques : renommage et déplacement visuel ne doivent pas les réorienter, tandis que la suppression produit explicitement `#REF!` ;
 - les noms ambigus, réservés ou incompatibles utilisent l’adressage A1 comme solution de repli ; la recopie verticale traduit les références A1 relatives et conserve les références par nom ;
 - une validation incorrecte conserve intégralement la saisie et l’ancienne valeur, puis affiche une erreur pédagogique ; aucun dialogue ne doit apparaître pendant un recalcul, une recopie ou le chargement d’un projet ;
-- les projets historiques contenant des formules A1 restent compatibles et utilisent le même moteur `CellFormula`, sans système de calcul parallèle.
+- les projets historiques contenant des formules A1 restent compatibles et utilisent le même moteur `CellFormula`, sans système de calcul parallèle ; les virgules décimales et exposants typographiques sont acceptés ;
+- l’action « Appliquer à toute la grandeur… » transforme atomiquement une formule ponctuelle compatible en grandeur calculée, en adoptant la colonne existante sans doublon et en conservant son nom, son unité, sa position et son indice logique ; les références A1 sont traduites vers les mêmes dépendances stables que les noms scientifiques ;
+- les formules interlignes, incohérentes ou circulaires sont refusées avant mutation ; le remplacement des valeurs est confirmé, l’annulation/rétablissement restaure l’état complet, et l’historique est invalidé si une nouvelle dépendance structurelle rend une annulation dangereuse ;
+- une formule ou une dérivée calculée peut être modifiée depuis Données par double-clic ou menu contextuel sur sa cellule ou son en-tête : Données réutilise les dialogues et mécanismes de Calculs, puis synchronise les dépendances, Graphique, Modélisation et la persistance ; le dialogue pédagogique « Créer une grandeur calculée », ses actions françaises et le bouton contextuel près de `fx` constituent le parcours de création depuis le tableur.
 
 ### Graphique
 

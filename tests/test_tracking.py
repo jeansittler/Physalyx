@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QLocale, QPoint, QPointF, Qt
+from PySide6.QtCore import QEvent, QLocale, QPoint, QPointF, Qt
 from PySide6.QtGui import QPixmap, QValidator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
 
 import test_video
 from physalix.ui.data_tab import MeasurementsModel
@@ -19,6 +19,18 @@ from physalix.ui.main_window import MainWindow
 from physalix.ui.video_tab import VideoTab
 from physalix.ui.graph_series import PopupComboBox
 from physalix.ui.project_state import restore, snapshot
+
+
+def tearDownModule():
+    """Détruire les fenêtres Qt fermées avant le repolissage du module suivant."""
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, MainWindow) and not widget.isVisible():
+            widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 class CalibrationInputTests(unittest.TestCase):

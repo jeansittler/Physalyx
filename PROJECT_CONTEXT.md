@@ -847,7 +847,7 @@ Après stabilisation définitive, la branche pourra éventuellement être suppri
 
 Version applicative actuelle :
 
-`1.9.0`
+`1.10.0`
 
 Version publique actuelle : `1.9.0`.
 

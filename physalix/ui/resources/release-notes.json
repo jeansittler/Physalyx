@@ -131,5 +131,16 @@
       "Physalix devient Physalyx : nouvelle identité publique, avec conservation du fonctionnement et des repères de l'application ;",
       "continuité assurée avec Physalix : les projets existants restent compatibles et peuvent toujours être ouverts."
     ]
+  },
+  {
+    "version": "1.10.0",
+    "notes": [
+      "Modélisation : historique des modèles par série, sélection, recalcul, remplacement et suppression, avec une présentation plus lisible des équations et du coefficient R².",
+      "Calculs : modification des formules et dérivées, saisie par noms scientifiques, gestion atomique des dépendances et messages d'erreur plus pédagogiques.",
+      "Données : édition intuitive des formules avec la barre fx, insertion des références par clic et utilisation conjointe des références A1 et des noms de grandeurs.",
+      "Tableur : transformation d'une formule ponctuelle en grandeur calculée, puis modification directe du calcul depuis les cellules ou les en-têtes.",
+      "Pointage vidéo : étalonnage harmonisé et longueurs désormais saisies en mètres, avec conversion compatible des anciens projets en centimètres ou millimètres.",
+      "Stabilité améliorée lors des suppressions de grandeurs, des recalculs dépendants et de la fermeture des interfaces Qt comportant des mises à jour différées."
+    ]
   }
 ]

@@ -1,6 +1,6 @@
 # Physalyx
 
-[![Version](https://img.shields.io/badge/version-1.9.0-0B6FA4)](https://github.com/jeansittler/Physalyx/releases/latest)
+[![Version](https://img.shields.io/badge/version-1.10.0-0B6FA4)](https://github.com/jeansittler/Physalyx/releases/latest)
 [![Windows](https://img.shields.io/badge/plateforme-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/jeansittler/Physalyx/releases/latest)
 [![Licence](https://img.shields.io/badge/licence-GPL--3.0-blue)](LICENSE)
 
@@ -57,7 +57,7 @@ Les projets enregistrent le travail dans le format `.physalix` afin de pouvoir l
 ## Installation et mises à jour
 
 1. Ouvrez la page **[Physalyx — dernière version](https://github.com/jeansittler/Physalyx/releases/latest)**.
-2. Téléchargez `Physalyx-Setup-1.9.0.exe` ou l'installateur d'une version plus récente.
+2. Téléchargez `Physalyx-Setup-1.10.0.exe` ou l'installateur d'une version plus récente.
 3. Lancez l'installateur signé et suivez les étapes affichées.
 4. Ouvrez Physalyx depuis Windows.
 

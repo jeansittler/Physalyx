@@ -1,5 +1,6 @@
 """Accès aux outils lors du redimensionnement de l'interface thémée."""
 import os
+import sys
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -51,6 +52,48 @@ class ThemeLayoutTests(unittest.TestCase):
                 center = button.mapTo(scroll.viewport(), button.rect().center())
                 self.assertTrue(scroll.viewport().rect().contains(center))
                 self.assertGreaterEqual(button.height(), 30)
+
+    def test_corrected_modeling_and_calculations_panels_do_not_clip_actions(self):
+        callback_errors = []
+        previous_hook = sys.excepthook
+        self.addCleanup(setattr, sys, "excepthook", previous_hook)
+        sys.excepthook = lambda *args: callback_errors.append(args)
+        for width, height in ((1366, 768), (1600, 900), (1100, 700)):
+            with self.subTest(size=(width, height)):
+                self.window.resize(width, height)
+                self.window.show_module(self.window.tabs.indexOf(self.window.modeling_tab))
+                self.app.processEvents()
+                modeling = self.window.modeling_tab.currentWidget()
+                self.assertIn("Modélisations de la série sélectionnée", [
+                    label.text() for label in modeling.fits_panel.findChildren(QLabel)])
+                for button in (modeling.new_fit_button, modeling.remove_button):
+                    bottom = button.mapTo(modeling.fits_panel, button.rect().bottomLeft())
+                    self.assertTrue(modeling.fits_panel.rect().contains(bottom))
+                self.assertIs(modeling.new_fit_button.parentWidget(),
+                              modeling.remove_button.parentWidget())
+                self.assertFalse(modeling.new_fit_button.geometry().intersects(
+                    modeling.remove_button.geometry()))
+
+                calculations = self.window.calculations_tab
+                self.window.show_module(self.window.tabs.indexOf(calculations))
+                targets = (1, 2, 3, 8) if not calculations.engine.items else (8,)
+                for target in targets:
+                    for index in range(len(calculations.engine.items), target):
+                        calculations.engine.add(f"calcul_{index}", "", expression=str(index + 1))
+                    self.app.processEvents()
+                    self.assertEqual(calculations.history.rowCount(), target)
+                    button_bottom = calculations.edit_formula_button.mapTo(
+                        calculations, calculations.edit_formula_button.rect().bottomLeft()).y()
+                    table_top = calculations.history.mapTo(
+                        calculations, calculations.history.rect().topLeft()).y()
+                    self.assertLess(button_bottom, table_top)
+                last = calculations.history.item(7, 0)
+                calculations.history.scrollToItem(last)
+                self.app.processEvents()
+                self.assertTrue(calculations.history.viewport().rect().intersects(
+                    calculations.history.visualItemRect(last)))
+        sys.excepthook = previous_hook
+        self.assertEqual(callback_errors, [])
 
     def test_design_tokens_and_interaction_states_are_centralized(self):
         self.assertNotEqual(LIGHT.background, LIGHT.surface)

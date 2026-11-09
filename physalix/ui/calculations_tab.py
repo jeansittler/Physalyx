@@ -8,13 +8,41 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from physalix.calculations import CalculationEngine, derivative_unit
+from physalix.calculations import (CalculationEngine, FormulaError,
+                                   derivative_unit, quantity_reference)
 from physalix.ui.graph_series import PopupComboBox, configure_popup, update_popup_height
 from physalix.ui.math_help import math_help_button
-from physalix.ui.components import (ResponsiveCards, WheelSafeComboBox,
-                                    label as section_label, page_header,
+from physalix.ui.units import unit_combo
+from physalix.ui.components import (ResponsiveCards, label as section_label, page_header,
                                     page_layout, panel, role)
 from physalix.ui.theme import LIGHT
+
+
+def quantity_label(model, column, *, insertion=False):
+    name = model.names[column] or f"Grandeur {column + 1}"
+    label = name + (f" ({model.units[column]})" if model.units[column] else "")
+    if model.names.count(model.names[column]) > 1:
+        label += f" — colonne {column + 1}"
+    token = quantity_reference(model.names, column)
+    if insertion and token != model.names[column]:
+        label += f" — insérée comme {token}"
+    return label
+
+
+def formula_error_message(error):
+    message = str(error)
+    if isinstance(error, FormulaError):
+        guidance = {
+            "unknown_quantity": "Vérifiez son nom ou utilisez la liste des grandeurs disponibles.",
+            "unknown_function": "Utilisez une fonction proposée dans l’aide mathématique.",
+            "syntax": "Vérifiez les parenthèses, les opérateurs et les noms utilisés.",
+            "ambiguous": "Choisissez explicitement la grandeur dans la liste d’insertion.",
+            "circular": "Conservez une chaîne de calcul allant des mesures vers les résultats.",
+            "math": "Vérifiez le domaine des fonctions, les divisions et les valeurs du tableau.",
+        }.get(error.kind)
+        if guidance:
+            message += "\n\n" + guidance
+    return message
 
 
 class FormulaEditDialog(QDialog):
@@ -29,24 +57,34 @@ class FormulaEditDialog(QDialog):
         title = section_label(f"Formule de {engine.model.names[item.column]}")
         title.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(title)
-        self.expression = QLineEdit(item.formula.editable_expression())
+        self.expression = QLineEdit(item.formula.editable_expression(engine.model.names))
         caption = QLabel("Formule :")
         caption.setBuddy(self.expression)
         layout.addWidget(caption)
         layout.addWidget(self.expression)
+        unit_caption = QLabel("Unité du résultat :")
+        self.unit = unit_combo()
+        self.unit.setCurrentText(engine.model.units[item.column])
+        self.unit.setMaximumWidth(LIGHT.field_medium)
+        unit_caption.setBuddy(self.unit)
+        layout.addWidget(unit_caption)
+        layout.addWidget(self.unit)
         layout.addWidget(math_help_button(self))
-        columns = WheelSafeComboBox()
+        columns = PopupComboBox()
+        configure_popup(columns, LIGHT.field_wide)
         for column, name in enumerate(engine.model.names):
-            columns.addItem(f"C{column + 1} · {name}", column)
+            columns.addItem(quantity_label(engine.model, column, insertion=True), column)
+        update_popup_height(columns)
         insert = QPushButton("Insérer la grandeur")
-        insert.clicked.connect(lambda: self.expression.insert(f"C{columns.currentData() + 1}"))
+        insert.clicked.connect(lambda: self.expression.insert(
+            quantity_reference(engine.model.names, columns.currentData())))
         row = QHBoxLayout()
         row.addWidget(columns, 1)
         row.addWidget(insert)
         layout.addLayout(row)
         layout.addWidget(section_label(
-            "C1, C2… désignent les colonnes actuelles. Vous pouvez aussi saisir leurs noms. "
-            "Les grandeurs qui dépendent de ce calcul seront mises à jour.", "muted"))
+            "Saisissez les noms des grandeurs. Une référence de colonne n’est proposée que si "
+            "un nom ne peut pas être utilisé sans ambiguïté. Les calculs dépendants seront mis à jour.", "muted"))
         self.error = QLabel()
         self.error.setTextFormat(Qt.TextFormat.PlainText)
         self.error.setWordWrap(True)
@@ -64,6 +102,59 @@ class FormulaEditDialog(QDialog):
             if not any(item is self.item for item in self.engine.items):
                 raise ValueError("Cette grandeur a été supprimée.")
             self.engine.update_formula(self.item.column, self.expression.text())
+            self.engine.model.setData(
+                self.engine.model.index(1, self.item.column), self.unit.currentText())
+        except ValueError as error:
+            message = formula_error_message(error)
+            self.error.setText(message)
+            QMessageBox.warning(self, "Impossible de calculer la formule", message)
+            self.expression.setFocus()
+            return
+        self.accept()
+
+
+class DerivativeEditDialog(QDialog):
+    """Modifier une dérivée sans changer sa nature ni sa colonne."""
+
+    def __init__(self, engine, item, parent=None):
+        super().__init__(parent)
+        self.engine, self.item = engine, item
+        self.setWindowTitle("Modifier la dérivée")
+        layout = page_layout(QVBoxLayout(self))
+        layout.addWidget(section_label(f"Dérivée {engine.model.names[item.column]}"))
+        form = QFormLayout()
+        self.source, self.axis = PopupComboBox(), PopupComboBox()
+        for combo in (self.source, self.axis):
+            configure_popup(combo, LIGHT.field_wide)
+            for column in range(engine.model.columnCount()):
+                combo.addItem(quantity_label(engine.model, column), column)
+            update_popup_height(combo)
+        self.source.setCurrentIndex(self.source.findData(item.source))
+        self.axis.setCurrentIndex(self.axis.findData(item.axis))
+        self.name = QLineEdit(engine.model.names[item.column])
+        self.unit = QLineEdit(engine.model.units[item.column])
+        form.addRow("Grandeur à dériver :", self.source)
+        form.addRow("Par rapport à :", self.axis)
+        form.addRow("Nom du résultat :", self.name)
+        form.addRow("Unité du résultat :", self.unit)
+        layout.addLayout(form)
+        self.error = QLabel()
+        self.error.setWordWrap(True)
+        layout.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        role(buttons.button(QDialogButtonBox.StandardButton.Save), "primary").setText("Enregistrer")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.name.setFocus()
+
+    def save(self):
+        try:
+            self.engine.update_derivative(
+                self.item.column, self.name.text(), self.unit.text(),
+                self.source.currentData(), self.axis.currentData(),
+            )
         except ValueError as error:
             self.error.setText(str(error))
             return
@@ -125,8 +216,8 @@ class CalculationsTab(QWidget):
         formula_layout.addLayout(form)
         self.formula_name = QLineEdit()
         self.formula_name.setPlaceholderText("Exemple : v")
-        self.formula_unit = QLineEdit()
-        self.formula_unit.setPlaceholderText("Exemple : cm/s si Vx et Vy sont en cm/s")
+        self.formula_unit = unit_combo()
+        self.formula_unit.lineEdit().setPlaceholderText("Exemple : cm/s si Vx et Vy sont en cm/s")
         self.expression = QLineEdit()
         self.formula_name.setMaximumWidth(LIGHT.field_medium)
         self.formula_unit.setMaximumWidth(LIGHT.field_medium)
@@ -180,26 +271,31 @@ class CalculationsTab(QWidget):
         layout.addWidget(self.feedback)
         role(self.feedback, "context")
         history_panel, history_layout = panel("Grandeurs calculées")
-        history_layout.addWidget(section_label("Double-cliquez sur une grandeur par formule pour modifier son calcul.", "muted"))
+        history_layout.setSpacing(LIGHT.related)
+        history_actions = QHBoxLayout()
+        history_actions.setSpacing(LIGHT.related)
+        history_actions.addWidget(section_label(
+            "Double-cliquez sur une grandeur pour modifier son calcul.", "muted"), 1)
+        self.edit_formula_button = QPushButton("Modifier…")
+        self.edit_formula_button.clicked.connect(lambda: self.edit_calculation(self.history.currentRow()))
+        self.edit_formula_button.setEnabled(False)
+        history_actions.addWidget(self.edit_formula_button, 0, Qt.AlignmentFlag.AlignRight)
+        history_layout.addLayout(history_actions)
         self.history = QTableWidget(0, 4)
         self.history.setHorizontalHeaderLabels(["Grandeur", "Unité", "Calcul lié", "Bilan"])
         self.history.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.history.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.history.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.history.cellDoubleClicked.connect(self.edit_formula)
+        self.history.cellDoubleClicked.connect(self.edit_calculation)
         self.history.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.history.customContextMenuRequested.connect(self.formula_menu)
+        self.history.customContextMenuRequested.connect(self.calculation_menu)
         self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.history.horizontalHeader().setStretchLastSection(True)
         self.history.setMinimumHeight(120)
-        self.history.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+        self.history.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.history.verticalHeader().setDefaultSectionSize(32)
         history_layout.addWidget(self.history)
-        self.edit_formula_button = QPushButton("Modifier la formule…")
-        self.edit_formula_button.clicked.connect(lambda: self.edit_formula(self.history.currentRow()))
         self.history.itemSelectionChanged.connect(self.update_edit_button)
-        self.edit_formula_button.setEnabled(False)
-        history_layout.addWidget(self.edit_formula_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(history_panel, 1)
         self.engine.changed.connect(self.refresh)
         self.source.currentIndexChanged.connect(self.suggest_derivative)
@@ -221,7 +317,7 @@ class CalculationsTab(QWidget):
             combo.blockSignals(True)
             combo.clear()
             for i, (name, unit) in enumerate(zip(self.model.names, self.model.units)):
-                combo.addItem(f"C{i + 1} · {name}" + (f" ({unit})" if unit else ""), i)
+                combo.addItem(quantity_label(self.model, i, insertion=combo is self.quantity), i)
             update_popup_height(combo)
             combo.setCurrentIndex(max(0, combo.findData(previous)))
             combo.blockSignals(False)
@@ -235,31 +331,48 @@ class CalculationsTab(QWidget):
                 self.history.setItem(row, col, cell)
         self.update_edit_button()
 
-    def formula_at(self, row):
+    def item_at(self, row):
         if 0 <= row < len(self.engine.items):
-            item = self.engine.items[row]
-            if item.formula is not None:
-                return item
-        return None
+            return self.engine.items[row]
 
     def update_edit_button(self):
-        self.edit_formula_button.setEnabled(self.formula_at(self.history.currentRow()) is not None)
+        self.edit_formula_button.setEnabled(self.item_at(self.history.currentRow()) is not None)
 
-    def edit_formula(self, row, column=0):
-        item = self.formula_at(row)
+    def edit_calculation(self, row, column=0):
+        item = self.item_at(row)
         if item is not None:
-            dialog = FormulaEditDialog(self.engine, item, self)
+            dialog = (FormulaEditDialog(self.engine, item, self) if item.formula is not None
+                      else DerivativeEditDialog(self.engine, item, self))
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.feedback.setText(f"Formule de {self.model.names[item.column]} modifiée. Les résultats ont été recalculés.")
+                self.feedback.setText(
+                    f"Calcul de {self.model.names[item.column]} modifié. Les résultats ont été recalculés.")
 
-    def formula_menu(self, position):
+    def calculation_menu(self, position):
         row = self.history.rowAt(position.y())
-        if self.formula_at(row) is None:
+        item = self.item_at(row)
+        if item is None:
             return
         self.history.selectRow(row)
         menu = QMenu(self)
-        menu.addAction("Modifier la formule…", lambda: self.edit_formula(row))
+        menu.addAction("Modifier…", lambda: self.edit_calculation(row))
+        menu.addAction("Supprimer…", lambda: self.delete_calculation(row))
         menu.exec(self.history.viewport().mapToGlobal(position))
+
+    def delete_calculation(self, row):
+        item = self.item_at(row)
+        if item is None:
+            return
+        columns = self.model.quantities_to_remove(item.column)
+        message = f"Supprimer « {self.model.names[item.column]} » ?"
+        if len(columns) > 1:
+            message += "\n\nLes grandeurs qui en dépendent seront également supprimées :\n" + "\n".join(
+                f"• {self.model.names[column]}" for column in columns if column != item.column)
+        if QMessageBox.question(
+                self, "Supprimer une grandeur calculée", message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.model.remove_quantity(item.column)
+            self.refresh()
 
     def suggest_derivative(self):
         source, axis = self.source.currentData(), self.axis.currentData()
@@ -275,27 +388,29 @@ class CalculationsTab(QWidget):
     def insert_quantity(self):
         column = self.quantity.currentData()
         if column is not None:
-            self.insert_text(f"C{column + 1}")
+            self.insert_text(quantity_reference(self.model.names, column))
 
     def create_derivative(self):
         self._create(self.derivative_name.text(), self.derivative_unit.text(),
                      source=self.source.currentData(), axis=self.axis.currentData())
 
     def create_formula(self):
-        self._create(self.formula_name.text(), self.formula_unit.text(), expression=self.expression.text())
+        self._create(self.formula_name.text(), self.formula_unit.currentText(), expression=self.expression.text())
 
     def _create(self, name, unit, **definition):
         try:
             column = self.engine.add(name, unit, **definition)
         except ValueError as error:
-            message = str(error)
+            message = formula_error_message(error)
             self.feedback.setText(message)
             if "expression" in definition:
-                if message.startswith("Grandeur inconnue :"):
-                    unknown = message.split(". Utilisez", 1)[0]
-                    message = (f"{unknown}\n\nVérifiez la formule ou utilisez « Insérer la grandeur » "
-                               "pour sélectionner une grandeur existante.")
-                QMessageBox.warning(self, "Formule invalide", message)
+                QMessageBox.warning(self, "Impossible de calculer la formule", message)
+                self.expression.setFocus()
             return
         self.feedback.setText(f"{self.model.names[column]} créée dans Données (C{column + 1}). "
                               "Vous pouvez y modifier son nom et son unité. " + self.engine.items[-1].status)
+        if "expression" in definition:
+            self.formula_name.clear()
+            self.formula_unit.setCurrentText("")
+            self.expression.clear()
+            self.formula_name.setFocus()

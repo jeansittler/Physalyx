@@ -18,29 +18,32 @@ def math_text(expression):
     return text.replace('*', ' · ').replace('-', '−')
 
 
-def report_html(result, series_title, x_name, x_label, y_name, unit):
-    """Échapper tous les noms et formules issus du tableau utilisateur."""
-    unit = '' if unit == 'Sans unité' else unit
-    suffix = (' ' + escape(unit)) if unit else ''
-    formula = result.formula
-    x_symbol = x_name or 'x'
-    # Les modèles polynomiaux gagnent à être montrés sous leur forme numérique usuelle.
+def fitted_equation(result, x_symbol="x"):
+    """Return the fitted right-hand side in a compact, plain-text form."""
     polynomials = {'c': [('c', '')], 'a*x': [('a', x_symbol)],
                    'a*x + b': [('a', x_symbol), ('b', '')],
                    'a*x^2': [('a', x_symbol + '²')],
                    'a*x^2 + b*x + c': [('a', x_symbol + '²'), ('b', x_symbol), ('c', '')]}
-    if formula in polynomials:
+    if result.formula in polynomials:
         terms = []
-        for key, factor in polynomials[formula]:
+        for key, factor in polynomials[result.formula]:
             value = result.parameters[key]
             sign = ('− ' if value < 0 else '') if not terms else (' − ' if value < 0 else ' + ')
             terms.append(sign + number(abs(value)) + (' · ' + factor if factor else ''))
-        fitted = ''.join(terms)
-    else:
-        fitted = re.sub(r'\b[^\W\d]\w*\b', lambda m:
-                        '(' + number(result.parameters[m[0]]) + ')' if m[0] in result.parameters else m[0], formula)
-        fitted = re.sub(r'\bx\b', x_symbol, fitted)
-    display_formula = re.sub(r'\bx\b', x_symbol, formula)
+        return ''.join(terms)
+    fitted = re.sub(r'\b[^\W\d]\w*\b', lambda match: (
+        '(' + number(result.parameters[match[0]]) + ')' if match[0] in result.parameters
+        else match[0]), result.formula)
+    return re.sub(r'\bx\b', x_symbol, fitted).replace('**', '^').replace('*', ' · ').replace('-', '−')
+
+
+def report_html(result, series_title, x_name, x_label, y_name, unit):
+    """Échapper tous les noms et formules issus du tableau utilisateur."""
+    unit = '' if unit == 'Sans unité' else unit
+    suffix = (' ' + escape(unit)) if unit else ''
+    x_symbol = x_name or 'x'
+    fitted = fitted_equation(result, x_symbol)
+    display_formula = re.sub(r'\bx\b', x_symbol, result.formula)
     rows = ''.join(
         f'<tr><td width="100"><b>{math_text(name)}</b></td><td>{number(value)}</td></tr>'
         for name, value in result.parameters.items())

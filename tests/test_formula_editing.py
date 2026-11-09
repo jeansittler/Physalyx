@@ -5,11 +5,12 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox
 from PySide6.QtTest import QTest
 from physalix.calculations import CalculationEngine, Formula
 from physalix.ui.data_tab import MeasurementsModel
-from physalix.ui.calculations_tab import CalculationsTab, FormulaEditDialog
+from physalix.ui.calculations_tab import (CalculationsTab, DerivativeEditDialog,
+                                          FormulaEditDialog)
 from physalix.ui.video_tracking import TrackingSession
 
 
@@ -76,34 +77,76 @@ class FormulaEditingTests(unittest.TestCase):
         a = self.engine.add("a", "", expression="x*2")
         item = self.engine.items[0]
         dialog = FormulaEditDialog(self.engine, item)
+        self.assertIn("x", dialog.expression.text())
+        self.assertNotIn("C1", dialog.expression.text())
         dialog.expression.setText("x*5")
         dialog.reject()
         self.assertEqual(self.model.rows[0][a], "2")
         dialog = FormulaEditDialog(self.engine, item)
         dialog.expression.setText("a+1")
-        dialog.save()
+        with patch.object(QMessageBox, "warning") as warning:
+            dialog.save()
+            warning.assert_called_once()
         self.assertTrue(dialog.error.text())
         self.assertNotEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertEqual(self.model.rows[0][a], "2")
         dialog.expression.setText("x*5")
+        dialog.unit.setCurrentText("m/s")
         dialog.save()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
         self.assertEqual(self.model.rows[0][a], "5")
+        self.assertEqual(self.model.units[a], "m/s")
 
-    def test_table_double_click_and_button_open_formula_only(self):
+    def test_derivative_dialog_cancel_is_translated(self):
+        self.engine.add("d", "", source=1, axis=0)
+        dialog = DerivativeEditDialog(self.engine, self.engine.items[0])
+        buttons = dialog.findChild(QDialogButtonBox)
+        self.assertEqual(
+            buttons.button(QDialogButtonBox.StandardButton.Cancel).text(), "Annuler")
+        dialog.close()
+
+    def test_table_double_click_and_button_open_formula_and_derivative(self):
         tab = CalculationsTab(self.model)
         tab.engine.add("a", "", expression="x*2")
         tab.engine.add("d", "", source=1, axis=0)
         tab.history.selectRow(0)
         self.assertTrue(tab.edit_formula_button.isEnabled())
-        with patch.object(FormulaEditDialog, "exec", return_value=QDialog.DialogCode.Rejected) as opened:
+        with (patch.object(FormulaEditDialog, "exec", return_value=QDialog.DialogCode.Rejected) as formulas,
+              patch.object(DerivativeEditDialog, "exec", return_value=QDialog.DialogCode.Rejected) as derivatives):
             tab.history.cellDoubleClicked.emit(0, 2)
             tab.edit_formula_button.click()
-            self.assertEqual(opened.call_count, 2)
+            self.assertEqual(formulas.call_count, 2)
             tab.history.selectRow(1)
-            self.assertFalse(tab.edit_formula_button.isEnabled())
+            self.assertTrue(tab.edit_formula_button.isEnabled())
             tab.history.cellDoubleClicked.emit(1, 2)
-            self.assertEqual(opened.call_count, 2)
+            self.assertEqual(derivatives.call_count, 1)
+        tab.close()
+
+    def test_derivative_edit_is_atomic_and_preserves_dependents(self):
+        derivative = self.engine.add("d", "", source=1, axis=0)
+        dependent = self.engine.add("double", "", expression="d*2")
+        self.engine.update_derivative(derivative, "dx/dy", "s", 0, 1)
+        item = self.engine.items[0]
+        self.assertEqual(item.kind, "derivative")
+        self.assertIsNone(item.formula)
+        self.assertEqual((item.source, item.axis), (0, 1))
+        self.assertEqual(self.model.names[derivative], "dx/dy")
+        self.assertEqual(self.model.column_dependencies[derivative], {0, 1})
+        self.assertEqual(float(self.model.rows[1][dependent]), 1.0)
+        before = (item.source, item.axis, self.model.names[derivative])
+        with self.assertRaisesRegex(ValueError, "circulaire"):
+            self.engine.update_derivative(derivative, "cycle", "", dependent, 0)
+        self.assertEqual((item.source, item.axis, self.model.names[derivative]), before)
+
+    def test_delete_calculation_confirms_dependent_removal(self):
+        tab = CalculationsTab(self.model)
+        derivative = tab.engine.add("d", "", source=1, axis=0)
+        tab.engine.add("double", "", expression="d*2")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes) as question:
+            tab.delete_calculation(0)
+        self.assertIn("double", question.call_args.args[2])
+        self.assertEqual(self.model.names, ["x", "y"])
+        self.assertEqual(tab.engine.items, [])
         tab.close()
 
     def test_lowercase_defaults_and_video_suffixes(self):

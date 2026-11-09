@@ -52,7 +52,11 @@ class ProjectTests(unittest.TestCase):
         m.setData(m.index(2, 4), '=B1+1')
         g = w.graph_tab.active_graph
         g.set_model(g.series[0], fit_model([0,1,2,3], [1,3,5,7], 'affine'), 'affine', {'extend': True})
-        w.modeling_tab.sync_fits(selected=1)
+        second_fit = g.set_model(
+            g.series[0], fit_model([0,1,2,3], [1,3,5,7], 'linear'), 'linear',
+            {'interval': [0, 3]},
+        )
+        w.modeling_tab.sync_fits(selected=second_fit.number)
         second = w.graph_tab.add_graph()
         second.series[0].y_choice.setCurrentIndex(2)
         second.series[0].y_axis.setCurrentIndex(1)
@@ -75,9 +79,18 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(v.graph_tab.windows[1].windowTitle(), 'Tension doublée')
         self.assertEqual(v.data_tab.model.rows, w.data_tab.model.rows)
         self.assertEqual(v.data_tab.model.formulas, {(0, 4): '=B1+1'})
+        calculations = v.calculations_tab.engine.items
+        self.assertEqual(calculations[0].formula.editable_expression(), "C2 * 2")
+        self.assertEqual(calculations[0].formula.editable_expression(v.data_tab.model.names), "y * 2")
+        self.assertEqual((calculations[1].kind, calculations[1].source, calculations[1].axis),
+                         ('derivative', 1, 0))
         first = v.graph_tab.windows[0].graph
-        self.assertEqual(len(first.series[0].fits), 1)
+        self.assertEqual(len(first.series[0].fits), 2)
         self.assertAlmostEqual(first.series[0].fits[0].result.parameters['a'], 2)
+        self.assertEqual(first.series[0].fits[1].kind, 'linear')
+        restored_modeling = v.modeling_tab.pages[first]
+        self.assertEqual(restored_modeling.fits_list.count(), 2)
+        self.assertEqual(restored_modeling.current_fit().number, first.series[0].fits[1].number)
         second = v.graph_tab.windows[1].graph
         self.assertEqual(second.series[0].color.name(), '#123456')
         self.assertEqual(second.series[0].y_axis.currentIndex(), 1)

@@ -185,9 +185,9 @@ class ResponsiveCards(QWidget):
 class ResponsiveActions(QWidget):
     """Aligner les actions sur une ligne, puis les empiler sans débordement."""
 
-    def __init__(self, primary, secondary, tertiary):
+    def __init__(self, primary, secondary, tertiary=None):
         super().__init__()
-        self.widgets = primary, secondary, tertiary
+        self.widgets = tuple(widget for widget in (primary, secondary, tertiary) if widget is not None)
         self.actions = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
         self.actions.setContentsMargins(0, 0, 0, 0)
         self.actions.setSpacing(LIGHT.related)
@@ -202,10 +202,12 @@ class ResponsiveActions(QWidget):
         self.actions.setDirection(QBoxLayout.Direction.LeftToRight if horizontal
                                   else QBoxLayout.Direction.TopToBottom)
         self.actions.addWidget(self.widgets[0], 0, Qt.AlignmentFlag.AlignLeft)
-        self.actions.addWidget(self.widgets[1], 0, Qt.AlignmentFlag.AlignLeft)
-        if horizontal:
-            self.actions.addStretch()
-        self.actions.addWidget(self.widgets[2], 0, Qt.AlignmentFlag.AlignLeft)
+        if len(self.widgets) > 1:
+            self.actions.addWidget(self.widgets[1], 0, Qt.AlignmentFlag.AlignLeft)
+        if len(self.widgets) > 2:
+            if horizontal:
+                self.actions.addStretch()
+            self.actions.addWidget(self.widgets[2], 0, Qt.AlignmentFlag.AlignLeft)
         self._horizontal = horizontal
 
     def resizeEvent(self, event):

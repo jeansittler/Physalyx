@@ -225,13 +225,26 @@ Conventions durables :
 - cette renumérotation d'affichage ne doit jamais modifier les identifiants internes stables, les couleurs, modèles, réglages ni la sauvegarde/relecture ;
 - fermer un graphique en disposition « Onglets » doit conserver l'état maximisé du graphique restant, sans sous-fenêtre flottante, barre de titre interne ni zone noire.
 
+### Modélisation
+
+Conventions durables :
+- les sélecteurs utilisent `PopupComboBox` et les helpers partagés ;
+- chaque série conserve son propre historique de modélisations, sans dupliquer les données scientifiques déjà portées par Graphique ;
+- une modélisation est présentée sur trois lignes compactes distinguant clairement la série et le type de modèle, l'équation obtenue, puis le coefficient R² ;
+- la sélection permet de retrouver les paramètres et résultats, de recalculer et remplacer le modèle choisi, ou de le supprimer sans affecter les autres modèles ;
+- toute création, modification ou suppression reste synchronisée avec Graphique et compatible avec la sauvegarde et la réouverture des projets existants ;
+- la barre d'actions et la liste doivent rester utilisables sans chevauchement ni contenu tronqué sur les écrans portables, notamment en `1366×768` et `1100×700`.
+
 ### Calculs
 
-Dans « Nouvelle grandeur par formule » :
-- la création directe à partir des champs Nom, Unité et Formule est le parcours principal ;
-- les outils mathématiques précèdent immédiatement l'action « Créer la grandeur » ;
-- l'insertion d'une grandeur existante est facultative et placée dans un volet secondaire replié par défaut ;
-- déplier ou utiliser ce volet ne doit pas interrompre la saisie : l'insertion se fait à la position courante du curseur.
+Conventions durables :
+- la création directe à partir des champs Nom, Unité et Formule reste le parcours principal, avec un sélecteur d'unité éditable ;
+- les formules affichées, saisies et modifiées utilisent en priorité les noms scientifiques des grandeurs, tandis que les identifiants internes restent stables et compatibles avec les références historiques `C1`, `C2`, etc. ;
+- les formules et dérivées peuvent être modifiées ou supprimées depuis le tableau ; les dépendances, recalculs et détections de cycles sont appliqués atomiquement afin qu'un échec ne laisse jamais un état partiellement modifié ;
+- l'insertion d'une grandeur existante utilise son nom exploitable dans la formule et ne doit pas interrompre la saisie ;
+- les erreurs distinguent de façon pédagogique les grandeurs inexistantes, les erreurs de syntaxe, les fonctions inconnues et les références circulaires, tout en préservant les champs saisis ;
+- après une création réussie uniquement, les champs Nom, Unité et Formule sont réinitialisés et le focus revient sur Nom ; une modification conserve son contexte ;
+- le tableau et la barre d'actions réutilisent les composants et conventions visuelles partagés avec les autres onglets.
 
 ### Responsive
 

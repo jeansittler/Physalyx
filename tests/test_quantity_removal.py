@@ -56,6 +56,29 @@ class QuantityRemovalTests(unittest.TestCase):
             window._discard_on_close = True
             window.close()
 
+    def test_axis_removal_updates_modeling_without_qt_callback_exception(self):
+        window = MainWindow()
+        try:
+            model = window.data_tab.model
+            model.rows = [[str(value), str(2 * value + 1)] for value in range(4)]
+            window.graph_tab.refresh_plot()
+            modeling = window.modeling_tab
+            modeling.model_choice.setCurrentIndex(modeling.model_choice.findData("affine"))
+            modeling.calculate()
+            self.assertEqual(modeling.fits_list.count(), 1)
+            with patch("sys.excepthook") as exception_hook:
+                model.remove_quantity(0)
+                QTest.qWait(10)
+                window.graph_tab.sync_columns()
+                QTest.qWait(10)
+            exception_hook.assert_not_called()
+            self.assertEqual(modeling.fits_list.count(), 0)
+            self.assertEqual(window.graph_tab.series[0].fits, [])
+            self.assertEqual(model.names, ["y"])
+        finally:
+            window._discard_on_close = True
+            window.close()
+
     def test_confirmation_cancel_and_delete_calculated_column(self):
         window = MainWindow()
         try:

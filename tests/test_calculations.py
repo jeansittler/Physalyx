@@ -11,7 +11,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
-from physalix.calculations import CalculationEngine, Formula, derivative_unit
+from physalix.calculations import (CalculationEngine, Formula, FormulaError,
+                                   derivative_unit)
 from physalix.ui.data_tab import MeasurementsModel
 from physalix.ui.main_window import MainWindow
 from physalix.ui.graph_series import PopupComboBox
@@ -39,6 +40,18 @@ class FormulaTests(unittest.TestCase):
         for expression in ("1/0", "sqrt(-1)", "2^101", "exp(1000)"):
             with self.subTest(expression=expression), self.assertRaises((ArithmeticError, ValueError)):
                 Formula(expression, []).evaluate([])
+
+    def test_formula_errors_are_classified_for_students(self):
+        for expression, kind, text in (
+                ("missing + 1", "unknown_quantity", "n’existe pas"),
+                ("mystery(X)", "unknown_function", "fonction"),
+                ("sqrt(", "syntax", "syntaxe"),
+                ("X + 1", "ambiguous", "plusieurs")):
+            names = ["X", "X"] if kind == "ambiguous" else ["X"]
+            with self.subTest(expression=expression), self.assertRaises(FormulaError) as caught:
+                Formula(expression, names)
+            self.assertEqual(caught.exception.kind, kind)
+            self.assertIn(text, str(caught.exception))
 
 
 class CalculationsTests(unittest.TestCase):
@@ -105,6 +118,10 @@ class CalculationsTests(unittest.TestCase):
         before = model.columnCount()
         with self.assertRaises(ValueError):
             engine.add("bad", "", expression="sqrt(X")
+        self.assertEqual(model.columnCount(), before)
+        with self.assertRaisesRegex(FormulaError, "mathématiquement impossible") as caught:
+            engine.add("impossible", "", expression="sqrt(-X-1)")
+        self.assertEqual(caught.exception.kind, "math")
         self.assertEqual(model.columnCount(), before)
         constant = engine.add("g", "m/s²", expression="9,81")
         self.assertEqual(model.rows[6][constant], "9.81")
@@ -213,18 +230,20 @@ class CalculationsTests(unittest.TestCase):
             self.assertTrue(tab.quantity.isVisible())
             self.assertTrue(tab.quantity_insert_button.isVisible())
             self.assertTrue(tab.quantity_toggle.text().endswith("▾"))
+            self.assertEqual(tab.quantity.itemText(0), "x")
+            self.assertEqual(tab.quantity.itemText(1), "y")
 
             tab.expression.setText("AB")
             tab.expression.setCursorPosition(1)
             tab.quantity.setCurrentIndex(1)
             tab.quantity_insert_button.click()
-            self.assertEqual(tab.expression.text(), "AC2B")
-            self.assertEqual(tab.expression.cursorPosition(), 3)
+            self.assertEqual(tab.expression.text(), "AyB")
+            self.assertEqual(tab.expression.cursorPosition(), 2)
             self.assertTrue(tab.expression.hasFocus())
 
             tab.quantity_toggle.click()
             self.assertFalse(tab.quantity_options.isVisible())
-            self.assertEqual(tab.expression.text(), "AC2B")
+            self.assertEqual(tab.expression.text(), "AyB")
         finally:
             window._discard_on_close = True
             window.close()
@@ -294,6 +313,9 @@ class CalculationsTests(unittest.TestCase):
         window = MainWindow()
         tab = window.calculations_tab
         try:
+            window.show()
+            window.show_module(window.tabs.indexOf(tab))
+            self.app.processEvents()
             # Utiliser le modèle partagé par l'onglet réellement construit.
             actual = window.data_tab.model
             actual.add_quantity()
@@ -317,15 +339,24 @@ class CalculationsTests(unittest.TestCase):
                 warning.assert_not_called()
                 tab.formula_button.click()
                 warning.assert_called_once()
-                self.assertEqual(warning.call_args.args[1], "Formule invalide")
-                self.assertIn("Grandeur inconnue : XY", warning.call_args.args[2])
-                self.assertIn("Insérer la grandeur", warning.call_args.args[2])
+                self.assertEqual(warning.call_args.args[1], "Impossible de calculer la formule")
+                self.assertIn("La grandeur « XY » n’existe pas", warning.call_args.args[2])
+                self.assertIn("liste des grandeurs", warning.call_args.args[2])
+                self.assertEqual(tab.formula_name.text(), "invalide")
+                self.assertEqual(tab.expression.text(), "XY + 1")
                 tab.formula_name.setText("valide")
+                self.assertGreater(tab.formula_unit.findText("m/s"), -1)
+                tab.formula_unit.setCurrentText("unité personnalisée")
                 # Le nom visible contient '/', mais la référence stable C4 reste utilisable.
                 tab.expression.setText("C4 * 2")
                 tab.formula_button.click()
                 self.assertEqual(warning.call_count, 1)
                 self.assertEqual(actual.names[-1], "valide")
+                self.assertEqual(actual.units[-1], "unité personnalisée")
+                self.assertEqual(tab.formula_name.text(), "")
+                self.assertEqual(tab.formula_unit.currentText(), "")
+                self.assertEqual(tab.expression.text(), "")
+                self.assertTrue(tab.formula_name.hasFocus())
         finally:
             window._discard_on_close = True
             window.close()

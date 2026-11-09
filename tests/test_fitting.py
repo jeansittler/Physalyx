@@ -12,10 +12,12 @@ from PySide6.QtWidgets import QApplication
 from physalix.fitting import Expression, MODELS, fit_model, parse_parameters
 from physalix.ui.main_window import MainWindow
 from physalix.ui.graph_series import PopupComboBox
+from physalix.ui.theme import LIGHT
 
 
 class FittingTests(unittest.TestCase):
     def test_polynomial_models(self):
+        self.assertEqual(MODELS["quadratic"][0], "Polynôme du second degré (parabole)")
         x = np.linspace(-3, 4, 30)
         for kind, y, expected in (
             ("constant", x*0+7, [7]), ("linear", 3*x, [3]),
@@ -106,12 +108,19 @@ class ModelingInterfaceTests(unittest.TestCase):
         window = MainWindow()
         graph, tab, model = window.graph_tab, window.modeling_tab, window.data_tab.model
         try:
+            window.resize(1366, 768)
+            window.show()
+            window.show_module(window.tabs.indexOf(window.modeling_tab))
+            self.app.processEvents()
             model.rows = [[str(x), str(2*x+3)] for x in range(8)]
             graph.refresh_plot()
             first = graph.series[0]
             tab.model_choice.setCurrentIndex(tab.model_choice.findData("affine"))
             tab.calculate()
             self.assertTrue(first.fits)
+            self.assertEqual(tab.fits_list.count(), 1)
+            self.assertFalse(tab.new_fit_button.geometry().intersects(
+                tab.remove_button.geometry()))
             curve = first.fits[0].curve
             self.assertEqual(len(first.fits[0].result.x), 600)
             self.assertGreater(len(curve.getData()[0]), 600)
@@ -123,8 +132,11 @@ class ModelingInterfaceTests(unittest.TestCase):
             first.visible.setChecked(False)
             self.assertFalse(curve.isVisible())
             self.assertTrue(first.fits)
+            self.assertIs(tab.current_series(), second)
+            self.assertEqual(tab.fits_list.count(), 0)
             first.visible.setChecked(True)
             tab.series_choice.setCurrentIndex(tab.series_choice.findData(first.number))
+            self.assertEqual(tab.fits_list.count(), 1)
             tab.range_check.setChecked(True)
             graph.fit_region.setRegion((2, 5))
             tab.calculate()
@@ -331,6 +343,10 @@ class ModelingInterfaceTests(unittest.TestCase):
         window = MainWindow()
         graph, tab, model = window.graph_tab, window.modeling_tab, window.data_tab.model
         try:
+            window.resize(1100, 700)
+            window.show()
+            window.show_module(window.tabs.indexOf(window.modeling_tab))
+            self.app.processEvents()
             # Deux branches séparées ; intersection (10, 2) sous tous les points mesurés.
             model.rows = [[str(x), str(12-x if x < 10 else x-8)]
                           for x in [0, 1, 2, 3, 17, 18, 19, 20]]
@@ -346,6 +362,22 @@ class ModelingInterfaceTests(unittest.TestCase):
             tab.calculate()
             second = series.fits[1]
             self.assertEqual(len(series.fits), 2)
+            self.assertIsInstance(tab.series_choice, PopupComboBox)
+            self.assertIsInstance(tab.fit_choice, PopupComboBox)
+            self.assertEqual(tab.fits_list.count(), 2)
+            self.assertFalse(tab.new_fit_button.geometry().intersects(
+                tab.remove_button.geometry()))
+            self.assertIn("S1 ·", tab.fits_list.item(0).text())
+            self.assertIn("Affine", tab.fits_list.item(0).text())
+            lines = tab.fits_list.item(0).text().splitlines()
+            self.assertEqual(len(lines), 3)
+            self.assertIn(" = ", lines[1])
+            self.assertTrue(lines[2].startswith("R² ="))
+            expected_height = 3 * tab.fits_list.fontMetrics().lineSpacing() + 2 * LIGHT.small
+            self.assertGreaterEqual(tab.fits_list.item(0).sizeHint().height(), expected_height)
+            tab.fits_list.setCurrentRow(0)
+            self.assertIs(tab.current_fit(), first)
+            self.assertEqual(tab.fits_list.selectedItems(), [tab.fits_list.item(0)])
             self.assertEqual(first.result.count, 4)
             self.assertEqual(second.result.count, 4)
             self.assertNotEqual(first.color, second.color)
@@ -380,6 +412,35 @@ class ModelingInterfaceTests(unittest.TestCase):
             tab.fit_choice.setCurrentIndex(tab.fit_choice.findData(first.number))
             tab.remove_fit()
             self.assertEqual(series.fits, [second])
+            self.assertEqual(tab.fits_list.count(), 1)
+            self.assertIs(tab.current_fit(), second)
+            self.assertFalse(tab.new_fit_button.geometry().intersects(
+                tab.remove_button.geometry()))
+            tab.new_fit_button.click()
+            tab.calculate()
+            self.assertEqual(len(series.fits), 2)
+            self.assertEqual(tab.fits_list.count(), 2)
+            self.assertFalse(tab.new_fit_button.geometry().intersects(
+                tab.remove_button.geometry()))
+            tab.new_fit_button.click()
+            tab.calculate()
+            self.assertEqual(len(series.fits), 3)
+            self.assertEqual(tab.fits_list.count(), 3)
+            tab.fits_list.setCurrentRow(2)
+            tab.fits_list.scrollToItem(tab.fits_list.item(2))
+            self.app.processEvents()
+            self.assertGreater(tab.fits_list.verticalScrollBar().maximum(), 0)
+            self.assertEqual(tab.fits_list.horizontalScrollBarPolicy(),
+                             Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            for width, height in ((1100, 700), (1366, 768)):
+                window.resize(width, height)
+                self.app.processEvents()
+                selected = tab.fits_list.visualItemRect(tab.fits_list.item(2))
+                self.assertGreaterEqual(selected.height(), expected_height)
+                self.assertTrue(tab.fits_list.viewport().rect().contains(selected.topLeft()))
+                self.assertTrue(tab.fits_list.viewport().rect().contains(selected.bottomRight()))
+                self.assertFalse(tab.new_fit_button.geometry().intersects(
+                    tab.remove_button.geometry()))
             self.assertNotIn(first.curve, graph.plot.getPlotItem().items)
             self.assertNotIn(first.extension, graph.plot.getPlotItem().items)
             model.rows[0][1] = '13'

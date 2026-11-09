@@ -15,7 +15,7 @@ MODELS = {
     "linear": ("Linéaire", "a*x"),
     "affine": ("Affine", "a*x + b"),
     "square": ("Carrée", "a*x^2"),
-    "quadratic": ("Polynôme du second degré", "a*x^2 + b*x + c"),
+    "quadratic": ("Polynôme du second degré (parabole)", "a*x^2 + b*x + c"),
     "exponential": ("Exponentielle", "A*exp(k*(x-x0)) + c"),
     "exponential_growth": (
         "Croissance exponentielle", "y_inf - (y_inf-y0)*exp(-k*(x-x0))"),

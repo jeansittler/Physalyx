@@ -1,17 +1,18 @@
 """Choisir une série, ajuster un modèle et consulter ses coefficients."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QScrollArea, QVBoxLayout, QWidget, QTextBrowser, QFrame,
+    QListWidget, QListWidgetItem, QAbstractItemView, QSizePolicy,
 )
 
 from physalix.fitting import MODELS, fit_model
-from physalix.ui.fit_report import report_html, math_text, DETAILS_HTML
+from physalix.ui.fit_report import report_html, math_text, fitted_equation, number, DETAILS_HTML
 from physalix.ui.graph_tab import paired_values
 from physalix.ui.graph_series import PopupComboBox, configure_popup, update_popup_height
 from physalix.ui.components import (ResponsiveActions, ResponsiveCards,
-                                    WheelSafeComboBox, page_header, page_layout,
+                                    page_header, page_layout,
                                     panel, refresh_style, role)
 from physalix.ui.icons import icon
 from physalix.ui.theme import LIGHT, report_stylesheet
@@ -61,17 +62,17 @@ class ModelingTab(QWidget):
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         model_layout.addLayout(form)
-        self.series_choice = WheelSafeComboBox()
+        self.series_choice = PopupComboBox()
         self.series_choice.setMaximumWidth(LIGHT.field_wide)
+        configure_popup(self.series_choice, LIGHT.field_wide)
         form.addRow("Série à modéliser", self.series_choice)
-        self.fit_choice = WheelSafeComboBox()
+        self.fit_choice = PopupComboBox()
         self.fit_choice.setMaximumWidth(LIGHT.field_medium)
+        configure_popup(self.fit_choice, LIGHT.field_wide)
         self.new_fit_button = QPushButton("Nouvelle modélisation")
         self.new_fit_button.setMaximumWidth(LIGHT.action_wide)
         self.new_fit_button.setIcon(icon("add"))
         self.new_fit_button.setToolTip("Créer une nouvelle modélisation sans modifier les précédentes, avec le même modèle ou un autre.")
-        form.addRow("Modélisation", self.fit_choice)
-        form.addRow("", self.new_fit_button)
         self.model_choice = PopupComboBox()
         self.model_choice.setMaximumWidth(LIGHT.field_medium)
         configure_popup(self.model_choice, LIGHT.field_medium)
@@ -134,9 +135,33 @@ class ModelingTab(QWidget):
         self.remove_button = role(QPushButton("Retirer cette modélisation"), "quiet")
         self.show_graph_button = QPushButton("Voir le graphique")
         self.show_graph_button.setIcon(icon("graph"))
-        self.action_bar = ResponsiveActions(
-            self.fit_button, self.show_graph_button, self.remove_button
-        )
+        self.fits_panel, fits_layout = panel("Modélisations de la série sélectionnée")
+        fits_layout.setContentsMargins(LIGHT.section, 2, LIGHT.section, 2)
+        fits_layout.setSpacing(LIGHT.small)
+        self.fits_hint = role(QLabel("Aucune modélisation pour cette série."), "muted")
+        self.fits_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.fits_hint.setMinimumWidth(160)
+        self.fits_list = QListWidget()
+        self.fits_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.fits_list.setAlternatingRowColors(True)
+        self.fits_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.fits_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.fits_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.fits_list.setMinimumHeight(72)
+        self.fits_list.setMaximumHeight(126)
+        self.fits_list.setAccessibleName("Modélisations réalisées pour la série sélectionnée")
+        fits_layout.addWidget(self.fits_list)
+        fits_actions = QHBoxLayout()
+        fits_actions.addWidget(self.fits_hint, 1)
+        for button in (self.new_fit_button, self.remove_button):
+            button.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            button.setMinimumWidth(0)
+            button.setMaximumWidth(LIGHT.action_wide)
+        fits_actions.addWidget(self.new_fit_button)
+        fits_actions.addWidget(self.remove_button)
+        fits_layout.addLayout(fits_actions)
+        body.addWidget(self.fits_panel)
+        self.action_bar = ResponsiveActions(self.fit_button, self.show_graph_button)
         body.addWidget(self.action_bar)
         self.result_text = ReportView()
         self.result_panel, result_layout = panel("Résultats")
@@ -154,6 +179,7 @@ class ModelingTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll)
         self.fit_choice.currentIndexChanged.connect(self.fit_selected)
+        self.fits_list.currentItemChanged.connect(self.realized_fit_selected)
         self.new_fit_button.clicked.connect(lambda: self.fit_choice.setCurrentIndex(0))
         self.extend_check.toggled.connect(self.extension_changed)
         self.fit_button.clicked.connect(self.calculate)
@@ -186,6 +212,7 @@ class ModelingTab(QWidget):
                 x, y = item.key()
                 self.series_choice.addItem(
                     f"S{item.display_number} : {self.graph.axis_label(y)} en fonction de {self.graph.axis_label(x)}", item.number)
+        update_popup_height(self.series_choice)
         index = self.series_choice.findData(previous)
         self.series_choice.setCurrentIndex(index if index >= 0 else 0)
         self.series_choice.blockSignals(False)
@@ -207,6 +234,9 @@ class ModelingTab(QWidget):
         number = self.fit_choice.currentData()
         return next((f for f in item.fits if f.number == number), None) if item else None
 
+    def valid_axis_column(self, column):
+        return isinstance(column, int) and 0 <= column < self.graph.model.columnCount()
+
     def sync_fits(self, reset=False, selected=None):
         previous = selected if selected is not None else (None if reset else self.fit_choice.currentData())
         self.fit_choice.blockSignals(True)
@@ -218,14 +248,63 @@ class ModelingTab(QWidget):
                 lo, hi = fit.result.x[0], fit.result.x[-1]
                 self.fit_choice.addItem(
                     f"Modélisation {fit.number} · {MODELS.get(fit.kind, ('Modèle',))[0]} · [{lo:.5g} ; {hi:.5g}]".replace('.', ','), fit.number)
+        update_popup_height(self.fit_choice)
         index = self.fit_choice.findData(previous)
         self.fit_choice.setCurrentIndex(max(index, 0))
         self.fit_choice.blockSignals(False)
+        self.fits_list.blockSignals(True)
+        self.fits_list.clear()
+        if item:
+            x, y = item.key()
+            x_name = self.graph.model.names[x] if self.valid_axis_column(x) else "x"
+            y_name = self.graph.model.names[y] if self.valid_axis_column(y) else "y"
+            for fit in item.fits:
+                quality = "R² non défini" if fit.result.r_squared is None else f"R² = {number(fit.result.r_squared)}"
+                title = MODELS.get(fit.kind, ("Modèle",))[0]
+                text = (f"S{item.display_number} · {y_name}({x_name}) — {title}\n"
+                        f"{y_name} = {fitted_equation(fit.result, x_name)}\n"
+                        f"{quality}")
+                entry = QListWidgetItem(text)
+                row_height = 3 * self.fits_list.fontMetrics().lineSpacing() + 2 * LIGHT.small
+                entry.setSizeHint(QSize(0, row_height))
+                entry.setData(Qt.ItemDataRole.UserRole, fit.number)
+                entry.setToolTip(text)
+                self.fits_list.addItem(entry)
+                if fit.number == previous:
+                    self.fits_list.setCurrentItem(entry)
+        self.fits_list.blockSignals(False)
+        self.fits_hint.setVisible(self.fits_list.count() == 0)
+        self.fits_list.setVisible(self.fits_list.count() > 0)
+        self.update_fits_panel_height()
+        QTimer.singleShot(0, self.update_fits_panel_height)
         self.fit_button.setText("Recalculer cette modélisation" if self.current_fit() else "Calculer la modélisation")
+
+    def update_fits_panel_height(self):
+        if self.fits_list.count():
+            self.fits_panel.setMaximumHeight(16777215)
+        else:
+            self.fits_panel.setMaximumHeight(
+                self.fits_panel.minimumSizeHint().height() + LIGHT.related)
+
+    def realized_fit_selected(self, current, previous=None):
+        if current is None:
+            return
+        index = self.fit_choice.findData(current.data(Qt.ItemDataRole.UserRole))
+        if index >= 0 and index != self.fit_choice.currentIndex():
+            self.fit_choice.setCurrentIndex(index)
 
     def fit_selected(self, *args):
         self.graph.set_interval_editing(False)
         fit = self.current_fit()
+        self.fits_list.blockSignals(True)
+        for row in range(self.fits_list.count()):
+            entry = self.fits_list.item(row)
+            if entry.data(Qt.ItemDataRole.UserRole) == (fit.number if fit else None):
+                self.fits_list.setCurrentItem(entry)
+                break
+        if fit is None:
+            self.fits_list.clearSelection()
+        self.fits_list.blockSignals(False)
         if fit:
             self.model_choice.setCurrentIndex(self.model_choice.findData(fit.kind))
             self.expression.setText(fit.settings.get('expression', ''))
@@ -344,8 +423,14 @@ class ModelingTab(QWidget):
         item = self.current_series()
         fit = self.current_fit()
         if item and fit:
+            index = item.fits.index(fit)
             self.graph.clear_model(item, fit)
-        self.sync_fits()
+            selected = (item.fits[min(index, len(item.fits) - 1)].number
+                        if item.fits else None)
+        else:
+            selected = None
+        self.sync_fits(selected=selected)
+        self.fit_selected()
         self.show_result()
 
     def show_result(self):
@@ -354,6 +439,17 @@ class ModelingTab(QWidget):
         item = self.current_series()
         fit = self.current_fit()
         result = fit.result if fit else None
+        axes_valid = item is not None and all(
+            self.valid_axis_column(column) for column in item.key())
+        if result is not None and not axes_valid:
+            self.result_panel.setProperty("state", "empty")
+            refresh_style(self.result_panel)
+            self.remove_button.setEnabled(False)
+            self.details_button.setVisible(False)
+            self.result_text.setPlainText(
+                "Les axes de cette série sont en cours d’actualisation. "
+                "Choisissez deux grandeurs valides dans Graphique pour consulter la modélisation.")
+            return
         self.result_panel.setProperty("state", "ready" if result is not None else "empty")
         refresh_style(self.result_panel)
         self.remove_button.setEnabled(result is not None)

@@ -250,6 +250,7 @@ def restore(window, state, path=None):
     tracking.origin = QPointF(*video['origin']) if video.get('origin') else None
     tracking.ruler = tuple(QPointF(*p) for p in video['ruler']) if video.get('ruler') else None
     tracking.points = {i: (QPointF(*p), t) for i, p, t in video.get('points', [])}
+    tracking.normalize_legacy_unit()
     if video.get('cache'):
         metadata = video['cache']
         if not path or not metadata['times']:

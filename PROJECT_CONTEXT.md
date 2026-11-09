@@ -262,6 +262,12 @@ Conventions durables :
 - après une création réussie uniquement, les champs Nom, Unité et Formule sont réinitialisés et le focus revient sur Nom ; une modification conserve son contexte ;
 - le tableau et la barre d'actions réutilisent les composants et conventions visuelles partagés avec les autres onglets.
 
+### Pointage vidéo
+
+Conventions durables :
+- toute nouvelle calibration saisit la longueur réelle exclusivement en mètres ; le dialogue « Définir l'étalon » reste compact, entièrement en français et utilise le sélecteur harmonisé pour les orientations horizontale, verticale ou libre ;
+- les projets historiques enregistrés en centimètres ou millimètres sont convertis une seule fois en mètres au chargement : longueur, échelle et coordonnées restent physiquement identiques, puis les colonnes transférées dans Données utilisent l'unité `m`.
+
 ### Responsive
 
 Pour les écrans complexes, penser notamment à :

@@ -8,7 +8,6 @@ from PySide6.QtGui import QValidator
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
 )
-from physalix.ui.components import WheelSafeComboBox
 
 
 class CalibrationLengthSpinBox(QDoubleSpinBox):
@@ -38,7 +37,7 @@ class CalibrationLengthSpinBox(QDoubleSpinBox):
 
 
 class CalibrationDialog(QDialog):
-    def __init__(self, parent, unit="m"):
+    def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Définir l'étalon")
         layout = QFormLayout(self)
@@ -46,14 +45,11 @@ class CalibrationDialog(QDialog):
         self.length.setLocale(QLocale(QLocale.Language.French))
         self.length.setDecimals(6)
         self.length.setRange(.000001, 1e9)
-        self.length.setValue(10)
+        self.length.setValue(.1)
         self.length.selectAll()
-        self.unit = WheelSafeComboBox()
-        self.unit.addItems(["mm", "cm", "m"])
-        self.unit.setCurrentText(unit)
-        layout.addRow("Longueur réelle :", self.length)
-        layout.addRow("Unité :", self.unit)
+        layout.addRow("Longueur réelle (m) :", self.length)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Annuler")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
@@ -88,6 +84,18 @@ class TrackingSession:
             raise ValueError("Choisissez deux points distants d'au moins un pixel et une longueur positive.")
         self.ruler = (start, end)
         self.scale, self.unit, self.length = length / distance, unit, length
+        self.sync()
+
+    def normalize_legacy_unit(self):
+        """Convertir une calibration historique en mètres sans changer sa dimension."""
+        factor = {"mm": .001, "cm": .01, "m": 1}.get(self.unit)
+        if factor is None or self.unit == "m":
+            return
+        if self.scale is not None:
+            self.scale *= factor
+        if self.length is not None:
+            self.length *= factor
+        self.unit = "m"
         self.sync()
 
     def set_axes(self, x_direction, y_direction):

@@ -18,6 +18,7 @@ from physalix.ui.automatic_tracking import AutomaticTracker
 from physalix.ui.components import (ResponsiveCards, WheelSafeComboBox,
                                     compact_width, label, page_header, panel,
                                     role, workspace_layout)
+from physalix.ui.graph_series import PopupComboBox, configure_popup, update_popup_height
 from physalix.ui.theme import LIGHT
 
 
@@ -150,12 +151,14 @@ class VideoTab(QWidget):
         tracking_layout.addWidget(self.correct_button, 0, Qt.AlignmentFlag.AlignVCenter)
         tracking_layout.addWidget(self.point_choice, 0, Qt.AlignmentFlag.AlignVCenter)
         self.direction_label = QLabel("Direction de l'étalon")
-        self.calibration_direction = WheelSafeComboBox()
+        self.calibration_direction = PopupComboBox()
         self.calibration_direction.setMaximumWidth(180)
         self.calibration_direction.setAccessibleName("Direction de l'étalon")
         self.direction_label.setBuddy(self.calibration_direction)
         for title, direction in (("Horizontal", "horizontal"), ("Vertical", "vertical"), ("Libre (diagonale)", "free")):
             self.calibration_direction.addItem(title, direction)
+        configure_popup(self.calibration_direction, 180)
+        update_popup_height(self.calibration_direction)
         self.calibration_direction.currentIndexChanged.connect(self.change_calibration_direction)
         calibration_layout.addWidget(self.direction_label, 0, Qt.AlignmentFlag.AlignVCenter)
         calibration_layout.addWidget(self.calibration_direction, 0,
@@ -494,9 +497,9 @@ class VideoTab(QWidget):
             if hypot(point.x() - start.x(), point.y() - start.y()) < 1:
                 self._set_hint("La longueur doit couvrir au moins un pixel dans la direction choisie. Cliquez plus loin ou changez de direction.")
                 return
-            dialog = CalibrationDialog(self, self.tracking.unit)
+            dialog = CalibrationDialog(self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.tracking.calibrate(start, point, dialog.length.value(), dialog.unit.currentText())
+                self.tracking.calibrate(start, point, dialog.length.value(), "m")
             self.set_mode(None)
         elif self.mode == "origin":
             self.tracking.set_origin(point)

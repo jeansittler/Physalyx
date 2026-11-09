@@ -17,6 +17,8 @@ from physalix.ui.video_canvas import VideoCanvas
 from physalix.ui.video_tracking import CalibrationDialog, TrackingSession
 from physalix.ui.main_window import MainWindow
 from physalix.ui.video_tab import VideoTab
+from physalix.ui.graph_series import PopupComboBox
+from physalix.ui.project_state import restore, snapshot
 
 
 class CalibrationInputTests(unittest.TestCase):
@@ -70,6 +72,7 @@ class CalibrationInputTests(unittest.TestCase):
         dialog = CalibrationDialog(None)
         dialog.length.setValue(.3)
         buttons = dialog.findChild(QDialogButtonBox)
+        self.assertEqual(buttons.button(QDialogButtonBox.StandardButton.Cancel).text(), "Annuler")
         buttons.button(QDialogButtonBox.StandardButton.Cancel).click()
         self.assertEqual(dialog.result(), QDialog.DialogCode.Rejected)
 
@@ -243,8 +246,7 @@ class TrackingUiTests(unittest.TestCase):
                                  pos=tab.screen.screen_point(QPointF(x, y)).toPoint())
 
             def accept_dialog(dialog):
-                dialog.length.setValue(10)
-                dialog.unit.setCurrentText("cm")
+                dialog.length.setValue(.1)
                 return QDialog.DialogCode.Accepted
 
             tab.calibrate_button.click()
@@ -287,7 +289,7 @@ class TrackingUiTests(unittest.TestCase):
             previous_calibration = (tab.tracking.length, tab.tracking.scale, tab.tracking.ruler)
             with patch.object(CalibrationDialog, "exec", return_value=QDialog.DialogCode.Rejected):
                 click(55, 20)
-            self.assertEqual(tab.tracking.unit, "cm")
+            self.assertEqual(tab.tracking.unit, "m")
             self.assertEqual((tab.tracking.length, tab.tracking.scale, tab.tracking.ruler), previous_calibration)
             old_values = [row[:3] for row in tab.model.rows]
             tab.open_video(self.path)
@@ -369,10 +371,11 @@ class TrackingUiTests(unittest.TestCase):
             self.wait_loaded(tab)
             self.assertEqual(tab.tracking.unit, "m")
             dialog = CalibrationDialog(window)
-            self.assertEqual(dialog.unit.currentText(), "m")
+            self.assertEqual(dialog.length.value(), .1)
+            self.assertFalse(hasattr(dialog, "unit"))
+            self.assertEqual(dialog.layout().labelForField(dialog.length).text(), "Longueur réelle (m) :")
             dialog.deleteLater()
             def accept(dialog):
-                self.assertEqual(dialog.unit.currentText(), "m")
                 dialog.length.setValue(1)
                 return QDialog.DialogCode.Accepted
             start, raw = QPointF(10, 10), QPointF(40, 30)
@@ -405,6 +408,47 @@ class TrackingUiTests(unittest.TestCase):
             self.assertEqual(tab.calibration_direction.currentData(), "horizontal")
             self.assertEqual(tab.screen.calibration_direction, "horizontal")
             self.assertEqual(tab.tracking.unit, "m")
+            self.assertIsInstance(tab.calibration_direction, PopupComboBox)
+            self.assertEqual(
+                [tab.calibration_direction.itemText(i) for i in range(tab.calibration_direction.count())],
+                ["Horizontal", "Vertical", "Libre (diagonale)"],
+            )
+            self.assertGreaterEqual(
+                tab.calibration_direction.view().height(),
+                3 * tab.calibration_direction.view().sizeHintForRow(0),
+            )
         finally:
             window._discard_on_close = True
             window.close()
+
+    def test_meter_calibration_roundtrip_and_legacy_centimeters(self):
+        source = MainWindow()
+        restored = MainWindow()
+        legacy = MainWindow()
+        try:
+            tracking = source.video_tab.tracking
+            tracking.calibrate(QPointF(0, 0), QPointF(30, 0), .30, "m")
+            tracking.set_origin(QPointF(0, 0))
+            tracking.record(0, QPointF(30, -15), .04)
+            state = snapshot(source)
+            restore(restored, state)
+            self.assertEqual(restored.video_tab.tracking.unit, "m")
+            self.assertAlmostEqual(restored.video_tab.tracking.length, .30)
+            self.assertEqual(restored.data_tab.model.units[:3], ["m", "m", "s"])
+            self.assertEqual(restored.data_tab.model.rows[0][:3], ["0.3", "0.15", "0.04"])
+
+            old_state = snapshot(source)
+            old_state["video"]["tracking"].update(unit="cm", length=30, scale=1)
+            old_state["table"]["units"][:2] = ["cm", "cm"]
+            old_state["table"]["rows"][0][:2] = ["30", "15"]
+            restore(legacy, old_state)
+            converted = legacy.video_tab.tracking
+            self.assertEqual(converted.unit, "m")
+            self.assertAlmostEqual(converted.length, .30)
+            self.assertAlmostEqual(converted.scale, .01)
+            self.assertEqual(legacy.data_tab.model.units[:3], ["m", "m", "s"])
+            self.assertEqual(legacy.data_tab.model.rows[0][:3], ["0.3", "0.15", "0.04"])
+        finally:
+            for window in (source, restored, legacy):
+                window._discard_on_close = True
+                window.close()

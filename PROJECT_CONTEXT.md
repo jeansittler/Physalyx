@@ -639,6 +639,18 @@ Release Physalyx 1.9.0 :
 - mise à jour automatique réelle 1.8.0 vers 1.9.0 sur PC fixe — confirmée ;
 - suite complète non relancée pour ce renommage — **NON VALIDÉE**.
 
+Release Physalyx 1.10.0 :
+- publiée officiellement sur GitHub le 10 novembre 2026 ;
+- suite complète de 715 tests — OK avant le dernier correctif de compatibilité, ensuite validé par tests ciblés et sur deux projets historiques réels ;
+- bundle, lancement Windows, inventaire tiers, signatures Certum, horodatages, installateur et manifeste public — OK ;
+- installation réelle et compatibilité des anciens projets — confirmées par l'utilisateur.
+
+Correctif Physalyx 1.10.1 préparé, non publié :
+- empêche une variable `SSLKEYLOGFILE` injectée par certains antivirus de bloquer la création du contexte TLS de l'updater ;
+- conserve la validation des certificats et des noms d'hôtes, les redirections HTTPS et les délais ;
+- tests ciblés de l'updater et requête réelle avec environnement Avast défectueux — OK ;
+- aucun bundle ni installateur 1.10.1 construit à ce stade.
+
 Le flash réel du Nano, sa reconnexion et sa réutilisation après flash avaient été
 validés avant la release. Le 16 octobre 2026, la mise à jour réelle vers 1.6.0 et
 le fonctionnement général sur portable ont également été confirmés par l'utilisateur.
@@ -726,10 +738,12 @@ Pour Physalyx 1.9.0, les trois assets publics sont
 ### Updater
 
 Le système de mise à jour utilise `update.json`.
-Le canal public `releases/latest/download/update.json` sert le manifeste 1.9.0,
-avec `mandatory = false`. L'URL historique `jeansittler/Physalix` reste volontairement
-utilisée par les versions déjà distribuées et redirige vers `jeansittler/Physalyx`.
-Le client de mise à jour valide et suit explicitement les redirections HTTPS.
+Le canal public `releases/latest/download/update.json` sert actuellement le manifeste
+1.10.0 avec `mandatory = false`. Le client valide les certificats et les noms d'hôtes,
+suit uniquement les redirections HTTPS autorisées et applique des délais bornés.
+Son contexte TLS vérifié est créé sans activer le journal optionnel `SSLKEYLOGFILE` de
+l'environnement : certains antivirus y placent un périphérique propre au processus,
+inaccessible ensuite à l'exécutable PyInstaller, ce qui ne doit pas empêcher la requête.
 
 Une release doit vérifier :
 - version correcte ;
@@ -864,11 +878,11 @@ Après stabilisation définitive, la branche pourra éventuellement être suppri
 
 ## 16. Versioning
 
-Version applicative actuelle :
+Version applicative préparée :
 
-`1.10.0`
+`1.10.1`
 
-Version publique actuelle : `1.9.0`.
+Version publique actuelle : `1.10.0`.
 
 Firmware Arduino :
 

@@ -9,12 +9,13 @@ import math
 import os
 from pathlib import Path
 import re
+import ssl
 import sys
 import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from physalix import __development__, __version__, __version_info__
 
@@ -173,7 +174,14 @@ class SafeRedirect(HTTPRedirectHandler):
 def open_url(url, allow_local=False):
     validate_url(url, allow_local)
     request = Request(url, headers={"User-Agent": f"Physalix/{__version__}", "Accept-Encoding": "identity"})
-    return build_opener(SafeRedirect(allow_local)).open(request, timeout=TIMEOUT)
+    # Some security products inject SSLKEYLOGFILE with a process-specific device
+    # path.  A frozen child may not be allowed to open it, although TLS itself is
+    # available.  Build the normal verified client context without enabling the
+    # optional key logger inherited from the environment.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs()
+    return build_opener(SafeRedirect(allow_local), HTTPSHandler(context=context)).open(
+        request, timeout=TIMEOUT)
 
 
 def read_chunks(response, maximum, cancel, deadline):

@@ -142,5 +142,11 @@
       "Pointage vidéo : étalonnage harmonisé et longueurs désormais saisies en mètres, avec conversion compatible des anciens projets en centimètres ou millimètres.",
       "Stabilité améliorée lors des suppressions de grandeurs, des recalculs dépendants et de la fermeture des interfaces Qt comportant des mises à jour différées."
     ]
+  },
+  {
+    "version": "1.10.1",
+    "notes": [
+      "Correction d'un problème empêchant la recherche de mises à jour dans certains environnements Windows avec antivirus."
+    ]
   }
 ]

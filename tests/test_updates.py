@@ -166,6 +166,12 @@ class UpdateTests(unittest.TestCase):
                 u.validate_url(url)
         u.validate_url("http://127.0.0.1:8765/update.json", True)
 
+    def test_transport_ignores_inaccessible_ssl_keylog_device(self):
+        with patch.dict(u.os.environ, SSLKEYLOGFILE=r"\\.\aswMonFltProxy\missing"):
+            with patch.object(u, "build_opener") as opener:
+                u.open_url(u.MANIFEST_URL)
+        opener.return_value.open.assert_called_once()
+
     def test_override_only_in_source(self):
         with patch.dict("os.environ", PHYSALIX_UPDATE_MANIFEST_URL="http://127.0.0.1:8765/update.json"):
             with patch.object(u.sys, "frozen", False, create=True):

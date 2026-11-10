@@ -38,7 +38,18 @@ def restore_controls(owner, values):
             continue
         widget, value = vars(owner)[name], values[name]
         if isinstance(widget, QComboBox):
-            widget.setCurrentIndex(value)
+            if type(value) is int:
+                widget.setCurrentIndex(value)
+            elif isinstance(value, str):
+                index = widget.findText(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                elif widget.isEditable():
+                    widget.setEditText(value)
+                else:
+                    raise ValueError(f"Option inconnue pour {name}: {value!r}")
+            else:
+                raise ValueError(f"Selection invalide pour {name}: {value!r}")
         elif isinstance(widget, QLineEdit):
             widget.setText(value)
         elif isinstance(widget, QAbstractButton):

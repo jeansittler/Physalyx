@@ -271,6 +271,26 @@ class ProjectTests(unittest.TestCase):
         self.assertTrue(restored.image_analysis_tab.image.isNull())
         self.assertEqual(restored.image_analysis_tab.profiles, [])
 
+    def test_version_one_text_formula_unit_restores_editable_combo(self):
+        state = snapshot(self.window)
+        state['calculations_controls']['formula_unit'] = 'm/s'
+        with zipfile.ZipFile(self.path, 'w') as archive:
+            archive.writestr('project.json', json.dumps({
+                'format': 'Physalix', 'version': 1, 'state': state,
+            }))
+
+        restored = MainWindow()
+        self.windows.append(restored)
+        restore(restored, read_project(self.path), self.path)
+        self.assertEqual(restored.calculations_tab.formula_unit.currentText(), 'm/s')
+
+        roundtrip = self.path.with_name('legacy-unit-roundtrip.physalix')
+        write_project(roundtrip, snapshot(restored))
+        reopened = MainWindow()
+        self.windows.append(reopened)
+        restore(reopened, read_project(roundtrip), roundtrip)
+        self.assertEqual(reopened.calculations_tab.formula_unit.currentText(), 'm/s')
+
     def test_save_dialog_proposes_name_without_extension(self):
         with patch.object(QFileDialog, 'getSaveFileName', return_value=('', '')) as dialog:
             self.assertFalse(self.window.save_project(save_as=True))

@@ -308,6 +308,8 @@ Les changements impliquant un remplacement de projet doivent tenir compte des ne
 
 Ne pas introduire de callback ou état matériel persistant après un `replace_project()`.
 
+Les projets de schéma version 1 peuvent contenir des valeurs textuelles pour des champs devenus depuis des listes déroulantes éditables, notamment l’unité d’une formule. La restauration recherche d’abord une option correspondante, puis conserve les valeurs personnalisées dans les sélecteurs éditables ; elle ne doit jamais transmettre directement ces textes à `QComboBox.setCurrentIndex()`.
+
 ---
 
 ## 7. Acquisition Arduino — état fonctionnel

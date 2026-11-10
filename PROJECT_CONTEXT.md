@@ -685,6 +685,13 @@ Ne jamais désactiver ou supprimer un test pour faire passer une release.
 Physalyx est distribué sous Windows sous forme de bundle PyInstaller `onedir` et
 d'un installateur Inno Setup.
 
+Les releases Windows doivent être construites dans un environnement virtuel dédié,
+créé depuis un CPython officiel standard. Avant PyInstaller, vérifier `sys.executable`,
+`sys.base_prefix` et `ssl.__file__`, ainsi que l'absence de modification propre à un
+runtime d'agent. Une requête HTTPS réelle doit réussir dans cet environnement, puis
+dans le binaire compilé avant toute signature ou génération d'installateur. Cette
+règle évite notamment d'embarquer un `ssl.py` dépendant d'une ressource interne absente.
+
 Workflow actuel :
 - build/bundle ;
 - smoke test ;

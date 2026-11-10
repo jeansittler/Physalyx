@@ -1,4 +1,4 @@
-# Environment validated on Windows x64, CPython 3.12.14.
+# Release environment: verified official CPython 3.12 x64 (currently 3.12.10).
 altgraph==0.17.5
 av==17.1.0
 colorama==0.4.6

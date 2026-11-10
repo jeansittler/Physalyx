@@ -59,15 +59,15 @@ Fonctionnalités principales existantes :
 
 ### Version publique
 
-**Physalyx 1.9.0**
+**Physalyx 1.10.1**
 
 Commit de release :
 
-`41a8e642adda5e99be3c34ee04713b418d0cdf4b`
+`1af4696e119ec998c604272809c44ae75af13ce0`
 
 Tag :
 
-`v1.9.0`
+`v1.10.1`
 
 Branche stable :
 
@@ -75,28 +75,28 @@ Branche stable :
 
 Release GitHub :
 
-`https://github.com/jeansittler/Physalyx/releases/tag/v1.9.0`
+`https://github.com/jeansittler/Physalyx/releases/tag/v1.10.1`
 
-Le tag annoté `v1.9.0` pointe exactement sur le commit de release ci-dessus.
-Physalyx 1.9.0 est la release stable et Latest sur GitHub. Le README public a été
-modernisé après la publication par le commit
-`7f24f47e68ba3dfbacd2e84c1e27795f6fee4f12`, actuellement sur `main`.
+Le tag annoté `v1.10.1` pointe exactement sur le commit de release ci-dessus.
+Physalyx 1.10.1 est la release stable et Latest sur GitHub. Son installation réelle,
+l'ouverture des projets historiques et la recherche de mises à jour depuis
+l'exécutable installé ont été validées sous Windows.
 Le dépôt GitHub existant a ensuite été renommé de `jeansittler/Physalix` vers
 `jeansittler/Physalyx` ; les anciennes URL GitHub redirigent vers le dépôt renommé.
 
 Assets publiés :
-- `Physalyx-Setup-1.9.0.exe`
-- `Physalyx-Setup-1.9.0.exe.sha256`
+- `Physalyx-Setup-1.10.1.exe`
+- `Physalyx-Setup-1.10.1.exe.sha256`
 - `update.json`
 
-Taille de l'installateur 1.9.0 : `85 511 056 octets`.
+Taille de l'installateur 1.10.1 : `87 180 592 octets`.
 
-SHA-256 de l’installateur 1.9.0 :
+SHA-256 de l’installateur 1.10.1 :
 
-`11be3c56a6be9a6c5185bfe3287312c12e1036e0038fea8e6428207866cb6c79`
+`09c0a8f5d6dfba2969548d807bdb8c817694415a512813131917323f298e67ae`
 
 `update.json` public :
-- version `1.9.0`
+- version `1.10.1`
 - `mandatory = false`
 - URL de l’installateur cohérente avec la release GitHub
 - SHA identique à celui de l’installateur
@@ -645,11 +645,13 @@ Release Physalyx 1.10.0 :
 - bundle, lancement Windows, inventaire tiers, signatures Certum, horodatages, installateur et manifeste public — OK ;
 - installation réelle et compatibilité des anciens projets — confirmées par l'utilisateur.
 
-Correctif Physalyx 1.10.1 préparé, non publié :
+Release corrective Physalyx 1.10.1 :
 - empêche une variable `SSLKEYLOGFILE` injectée par certains antivirus de bloquer la création du contexte TLS de l'updater ;
 - conserve la validation des certificats et des noms d'hôtes, les redirections HTTPS et les délais ;
-- tests ciblés de l'updater et requête réelle avec environnement Avast défectueux — OK ;
-- aucun bundle ni installateur 1.10.1 construit à ce stade.
+- restaure correctement les unités textuelles des anciens projets de schéma v1 ;
+- bundle construit avec CPython officiel 3.12.10, signatures Certum et horodatages — OK ;
+- installation réelle, projets historiques et recherche de mises à jour dans l'exécutable installé — validés ;
+- assets, SHA-256 et manifeste publics — vérifiés.
 
 Le flash réel du Nano, sa reconnexion et sa réutilisation après flash avaient été
 validés avant la release. Le 16 octobre 2026, la mise à jour réelle vers 1.6.0 et
@@ -739,14 +741,14 @@ Les ressources firmware nécessaires au runtime doivent être incluses :
 
 Le bundle publié contient les ressources Nano et Uno ainsi qu'AVRDUDE. Les
 contrôles de distribution, de signature et de publication publique ont réussi.
-Pour Physalyx 1.9.0, les trois assets publics sont
-`Physalyx-Setup-1.9.0.exe`, `Physalyx-Setup-1.9.0.exe.sha256` et `update.json`.
+Pour Physalyx 1.10.1, les trois assets publics sont
+`Physalyx-Setup-1.10.1.exe`, `Physalyx-Setup-1.10.1.exe.sha256` et `update.json`.
 
 ### Updater
 
 Le système de mise à jour utilise `update.json`.
 Le canal public `releases/latest/download/update.json` sert actuellement le manifeste
-1.10.0 avec `mandatory = false`. Le client valide les certificats et les noms d'hôtes,
+1.10.1 avec `mandatory = false`. Le client valide les certificats et les noms d'hôtes,
 suit uniquement les redirections HTTPS autorisées et applique des délais bornés.
 Son contexte TLS vérifié est créé sans activer le journal optionnel `SSLKEYLOGFILE` de
 l'environnement : certains antivirus y placent un périphérique propre au processus,
@@ -885,11 +887,11 @@ Après stabilisation définitive, la branche pourra éventuellement être suppri
 
 ## 16. Versioning
 
-Version applicative préparée :
+Version applicative et publique actuelle :
 
 `1.10.1`
 
-Version publique actuelle : `1.10.0`.
+Release stable et Latest : `v1.10.1`.
 
 Firmware Arduino :
 
